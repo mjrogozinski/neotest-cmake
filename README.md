@@ -68,7 +68,7 @@ gtest_discover_tests(unit_tests)
 
 Configure the build once using your normal toolchain/preset. The adapter builds relevant executable targets before every run, including their linked-library dependencies. It uses the configured build directory and never chooses a preset or fetches dependencies. If an existing build lacks File API metadata, the adapter requests codemodel-v2 and reconfigures that build using its cache before selecting targets.
 
-Build and configure failures open quickfix with clickable compiler diagnostics and stop test execution without an error popup. Relative diagnostic paths resolve from the build directory. Errors without a source location link to the captured build log. The source window keeps focus so you can fix and rerun; a successful rebuild clears this adapter's current quickfix list. Trouble users can also view that list with `:Trouble qflist open` (commonly `<leader>xQ`).
+Build and configure failures open quickfix with clickable compiler diagnostics and stop test execution without an error popup. The CMake consumer resets tests in the affected executable to neutral not-run marks, including parameter groups and tests in sibling source files; unrelated executables retain their results. Save-triggered discovery reuses known parameter names while sources are unbuilt, without launching the old binary. Relative diagnostic paths resolve from the build directory. Errors without a source location link to the captured build log. The source window keeps focus so you can fix and rerun; a successful rebuild clears this adapter's current quickfix list. Trouble users can also view that list with `:Trouble qflist open` (commonly `<leader>xQ`).
 
 ## Configuration
 

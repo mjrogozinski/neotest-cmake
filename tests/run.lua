@@ -1,3 +1,4 @@
+local write_fixture = dofile('tests/helpers.lua').write
 require('nio').run(function()
   require('nio').scheduler()
   local ok, err = xpcall(function()
@@ -130,7 +131,7 @@ require('nio').run(function()
     adapter({ build_dir = 'deliberately-wrong-build-directory' })
     local found = adapter.discover({ root = root, build_dir = '../../build/fixture' })
     assert(found.binaries == 5, 'discovery did not group registrations by executable: ' .. vim.inspect(found))
-    assert(found.cases == 38, 'incorrect concrete case count: ' .. vim.inspect(found))
+    assert(found.cases == 39, 'incorrect concrete case count: ' .. vim.inspect(found))
     local after_build, after_spec = run(nearest)
     assert(after_build[nearest:data().id].status == 'passed')
     assert(after_spec.cwd == vim.fs.normalize(root .. '/../../build/fixture'), 'run ignored discovered build directory')
@@ -139,7 +140,7 @@ require('nio').run(function()
     local broken_path = root .. '/unregistered.cpp'
     local original = assert(detection.read(broken_path))
     local function write(text)
-      local file = assert(io.open(broken_path, 'w')); file:write(text); file:close()
+      write_fixture(broken_path, text)
     end
     local checked, reason = xpcall(function()
       write(original .. '\n#error intentional_build_failure\n')
@@ -169,6 +170,25 @@ require('nio').run(function()
     write(original)
     adapter.prepare(nearest)
     assert(checked, reason)
+    -- A file with no cached discovery must not enumerate its binary when a
+    -- different source in that same target is newer (and currently broken).
+    local cases_path = root .. '/cases.cpp'
+    local cases_text = assert(detection.read(cases_path))
+    local system, launches = vim.system, 0
+    local cold_ok, cold_error = xpcall(function()
+      write_fixture(cases_path, cases_text .. '\n#error cold_discovery_failure\n')
+      vim.system = function(command, ...)
+        if vim.tbl_contains(command, '--gtest_list_tests') then launches = launches + 1 end
+        return system(command, ...)
+      end
+      local cold = assert(adapter.discover_positions(root .. '/cases_extra.cpp'))
+      assert(cold:get_key(root .. '/cases_extra.cpp::SharedBinary.Pass'))
+      assert(launches == 0, 'cold discovery enumerated a stale executable')
+    end, debug.traceback)
+    vim.system = system
+    write_fixture(cases_path, cases_text)
+    adapter.prepare(only)
+    assert(cold_ok, cold_error)
     print('All adapter integration checks passed')
   end, debug.traceback)
   require('nio').scheduler()

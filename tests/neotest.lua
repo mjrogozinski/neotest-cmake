@@ -1,3 +1,4 @@
+local write_fixture = dofile('tests/helpers.lua').write
 -- Real Neotest client, runner and summary; no mocked execution or UI rendering.
 require('nio').run(function()
   local nio = require('nio')
@@ -10,7 +11,7 @@ require('nio').run(function()
     local build = warmup and (vim.env.NEOTEST_BUILD_DIR or 'build/clang') or '../../build/fixture'
     local adapter = require('neotest-cmake')({ root = root, build_dir = build })
     local neotest, client = require('neotest'), nil
-    local concrete, run_count = {}, 0
+    local concrete, run_count, runs = {}, 0, 0
     -- The test uses the main process parser, including CPP_PARSER_DIR.
     require('neotest.lib').subprocess.init = function() end
     neotest.setup({
@@ -20,6 +21,7 @@ require('nio').run(function()
         cmake = require('neotest-cmake.consumer'),
         check = function(c)
           client = c
+          c.listeners.run = function() runs = runs + 1 end
           c.listeners.results = function(_, results, partial)
             if not partial then
               concrete, run_count = results, run_count + 1
@@ -113,7 +115,7 @@ require('nio').run(function()
     if not warmup then
       local original = require('neotest-cmake.discovery').read(path)
       local function write(text)
-        local file = assert(io.open(path, 'w')); file:write(text); file:close()
+        write_fixture(path, text)
       end
       local checked, reason = xpcall(function()
         local failing = original:gsub('EXPECT_GT%(GetParam%(%), 0%);', 'EXPECT_NE(GetParam(), 2);', 1)
@@ -122,7 +124,7 @@ require('nio').run(function()
         invoke('new failing instance', function()
           neotest.cmake.run({ path .. '::Numbers/Values.Positive/1', adapter = id })
         end)
-        assert(concrete[path .. '::Numbers/Values.Positive/1'].status == 'failed')
+        assert(concrete[path .. '::Numbers/Values.Positive/1'].status == 'failed', vim.inspect(concrete[path .. '::Numbers/Values.Positive/1']))
         source_mark('Values.Positive', 'failed')
         write(original)
         invoke('fixed failing instance', function()
@@ -163,7 +165,7 @@ require('nio').run(function()
     if not warmup then
       local original = require('neotest-cmake.discovery').read(path)
       local function write(text)
-        local file = assert(io.open(path, 'w')); file:write(text); file:close()
+        write_fixture(path, text)
       end
       local changed, reason = xpcall(function()
         write(original .. '\nINSTANTIATE_TEST_SUITE_P(AddedAtRun, Values, testing::Values(4));\n')
@@ -181,32 +183,77 @@ require('nio').run(function()
     end
     if not warmup then
       local original = require('neotest-cmake.discovery').read(path)
-      local notify, messages = vim.notify, {}
+      local notify, system, messages, launches = vim.notify, vim.system, {}, {}
+      local sibling = root .. '/cases_extra.cpp'
+      local other = root .. '/second.cpp'
+      for _, file in ipairs({ sibling, other }) do
+        client:_update_positions(file, { adapter = id })
+        invoke('seed sibling result', function() neotest.cmake.run(file) end)
+      end
+      local other_key, sibling_key = other .. '::SecondBinary.Pass', sibling .. '::SharedBinary.Pass'
+      assert(client:get_results(id)[other_key].status == 'passed')
+      assert(client:get_results(id)[sibling_key].status == 'passed')
+      local executables = {}
+      for _, exe in ipairs(require('neotest-cmake.discovery').artifacts(vim.fs.normalize(root .. '/' .. build), '')) do
+        executables[vim.uv.fs_realpath(exe) or exe] = true
+      end
       local function write(text)
-        local file = assert(io.open(path, 'w')); file:write(text); file:close()
+        write_fixture(path, text)
+      end
+      local function neutral()
+        nio.sleep(50)
+        local known = client:get_results(id)
+        for _, name in ipairs(expected) do
+          local key = path .. '::' .. name
+          assert(not known[key], 'stale test result survived a failed build: ' .. name)
+          assert(not client:is_running(key, { adapter = id }), 'blocked test is still running')
+        end
+        assert(not known[sibling_key], 'another file in the failed binary retained a passing result')
+        assert(known[other_key] and known[other_key].status == 'passed', 'unrelated binary lost its result')
+        source_mark('Basic.Pass', 'test')
+        source_mark('Values.Positive', 'namespace')
+        source_mark('Values.Mixed', 'namespace')
+        source_mark('Typed.Size', 'namespace')
+        source_mark('TypeParameters.Size', 'namespace')
+        assert(#launches == 0, 'stale executable or CTest run launched: ' .. vim.inspect(launches))
       end
       local checked, reason = xpcall(function()
         write(original .. '\n#error intentional_quickfix_failure\n')
         vim.notify = function(message) messages[#messages + 1] = message end
-        local previous = run_count
+        vim.system = function(command, ...)
+          local exe = vim.uv.fs_realpath(command[1]) or command[1]
+          if executables[exe] or (vim.fs.basename(exe) == 'ctest' and not vim.tbl_contains(command, '--show-only=json-v1')) then
+            launches[#launches + 1] = vim.deepcopy(command)
+          end
+          return system(command, ...)
+        end
+        -- Simulate save-triggered discovery before invoking the run keymap.
+        client:_update_positions(path, { adapter = id })
+        assert(#launches == 0, 'saving a changed source enumerated its old binary')
+        local previous, previous_runs = run_count, runs
         neotest.cmake.run(path)
-        nio.sleep(50)
-        assert(run_count == previous, 'consumer ran tests after a failed build')
+        neutral()
+        assert(run_count == previous and runs == previous_runs, 'consumer emitted a test run after a failed build')
         assert(vim.fn.getqflist({ winid = 0 }).winid > 0, 'consumer did not open quickfix')
         assert(vim.api.nvim_buf_get_name(0) == path, 'quickfix stole focus from the source buffer')
-        -- Standard Neotest/summary actions also stop without throwing, and must
-        -- clear their running state instead of leaving tests stuck as running.
+        -- Discovery and retries after failure preserve parameter rows without
+        -- launching the binary. Selecting the unchanged sibling must also fail.
+        client:_update_positions(path, { adapter = id })
+        for _, name in ipairs(expected) do assert(client:get_position(path .. '::' .. name, { adapter = id })) end
+        neotest.cmake.run(sibling)
+        neutral()
         invoke('plain Neotest failed build', function() neotest.run.run(path) end)
-        for _, name in ipairs(expected) do
-          local key = path .. '::' .. name
-          assert(concrete[key] and concrete[key].status == 'skipped', 'stale test executable ran')
-          assert(not client:is_running(key, { adapter = id }), 'blocked test is still running')
-        end
+        neutral()
         assert(#messages == 0, 'build failure emitted an error notification: ' .. vim.inspect(messages))
       end, debug.traceback)
-      vim.notify = notify
+      vim.notify, vim.system = notify, system
       write(original)
       invoke('rebuild after compiler error', function() neotest.cmake.run(path) end)
+      source_mark('Values.Positive', 'passed')
+      source_mark('Values.Mixed', 'failed')
+      assert(client:get_results(id)[other_key].status == 'passed')
+      invoke('recover sibling result', function() neotest.cmake.run(sibling) end)
+      assert(client:get_results(id)[sibling_key].status == 'passed')
       assert(#vim.fn.getqflist() == 0, 'successful build left stale quickfix diagnostics')
       assert(checked, reason)
     end

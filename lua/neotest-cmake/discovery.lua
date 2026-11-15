@@ -72,6 +72,22 @@ function M.targets(build, config)
       if not config or config == '' then break end
     end
   end
+  -- Keep source ownership (including linked libraries) on the executable so
+  -- both target selection and result invalidation use the same metadata.
+  local by_id = {}
+  for _, target in ipairs(out) do by_id[target.id] = target end
+  local function collect(target, seen)
+    if seen[target.id] then return end
+    seen[target.id] = true
+    for _, dep in ipairs(target.dependencies or {}) do
+      local child = by_id[dep.id]
+      if child then
+        collect(child, seen)
+        for path in pairs(child.files) do target.files[path] = true end
+      end
+    end
+  end
+  for _, target in ipairs(out) do collect(target, {}) end
   return out
 end
 function M.artifacts(build, config)
@@ -84,19 +100,13 @@ end
 
 -- Include executables linking a library that owns a selected source file.
 function M.selected_targets(build, config, files)
-  local targets, by_id, selected = M.targets(build, config), {}, {}
-  for _, target in ipairs(targets) do by_id[target.id] = target end
-  local function owns(target, seen)
-    if seen[target.id] then return false end
-    seen[target.id] = true
-    for path in pairs(files) do if target.files[path] then return true end end
-    for _, dep in ipairs(target.dependencies or {}) do
-      if by_id[dep.id] and owns(by_id[dep.id], seen) then return true end
+  local selected = {}
+  for _, target in ipairs(M.targets(build, config)) do
+    if #target.executables > 0 then
+      for path in pairs(files) do
+        if target.files[path] then selected[#selected + 1] = target; break end
+      end
     end
-    return false
-  end
-  for _, target in ipairs(targets) do
-    if #target.executables > 0 and owns(target, {}) then selected[#selected + 1] = target end
   end
   return selected
 end

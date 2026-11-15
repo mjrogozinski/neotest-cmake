@@ -4,8 +4,29 @@ local nio = require('nio')
 -- Plain neotest/summary runs also build through the adapter's build_spec.
 return function(client)
   local M = {}
+  local function invalidate(adapter_id, files)
+    local root = client:get_position(nil, { adapter = adapter_id })
+    local known = client:get_results(adapter_id)
+    for path in pairs(files) do
+      local tree = root and root:get_key(path)
+      if tree then
+        for _, pos in tree:iter() do
+          known[pos.id] = nil
+          client._state:running(adapter_id)[pos.id] = nil
+        end
+        for parent in tree:iter_parents() do known[parent:data().id] = nil end
+        -- Reuse position notifications to redraw neutral (not-run) signs and
+        -- summary rows without manufacturing a test run or an unknown status.
+        client._state:update_positions(adapter_id, tree)
+      end
+    end
+  end
   client.listeners.results = function(adapter_id, results, partial)
-    if partial or not vim.startswith(adapter_id, 'neotest-cmake:') then return end
+    if not vim.startswith(adapter_id, 'neotest-cmake:') then return end
+    for _, result in pairs(results) do
+      if result.build_failure then invalidate(adapter_id, result.build_failure.files); return end
+    end
+    if partial then return end
     local groups = {}
     for id in pairs(results) do
       local node = client:get_position(id, { adapter = adapter_id })
@@ -44,8 +65,8 @@ return function(client)
     if not tree then return neotest.run.run(args) end
     local _, adapter_id = client:get_position(tree:data().id, args)
     if vim.startswith(adapter_id or '', 'neotest-cmake:') then
-      local files = require('neotest-cmake').prepare(tree)
-      if not files then return end
+      local files, _, _, failure = require('neotest-cmake').prepare(tree)
+      if not files then invalidate(adapter_id, failure.files); return end
       for path in pairs(files) do client:_update_positions(path, { adapter = adapter_id }) end
     end
     neotest.run.run(args)

@@ -3,7 +3,7 @@ local parsers = require('neotest-cmake.parsers')
 local source = require('neotest-cmake.source')
 local diagnostics = require('neotest-cmake.diagnostics')
 local M = { name = 'neotest-cmake' }
-local builds, listings, build_locks = {}, {}, {}
+local builds, listings, build_locks, position_keys, unbuilt = {}, {}, {}, {}, {}
 local runner = vim.fs.dirname(debug.getinfo(1, 'S').source:sub(2)) .. '/runner.lua'
 local opts = { build_dir = 'build', config = '', ctest = 'ctest', discovery_timeout = 10000,
   jobs = 1, frameworks = {}, ctest_args = {}, build = true, cmake = 'cmake', build_timeout = 120000, dap = { type = 'codelldb' } }
@@ -62,7 +62,19 @@ local function listed(command, cwd, env)
   return keys
 end
 
-local function registrations(build, config)
+local function registrations(build, config, files)
+  local allowed
+  if files and #discovery.targets(build, config) > 0 then
+    allowed = {}
+    for _, target in ipairs(discovery.selected_targets(build, config, files)) do
+      for _, exe in ipairs(target.executables) do allowed[vim.uv.fs_realpath(exe) or exe] = true end
+    end
+  end
+  local function selected(exe, cwd)
+    if not exe then return false end
+    exe = discovery.join(cwd, exe)
+    return not allowed or allowed[vim.uv.fs_realpath(exe) or exe]
+  end
   local command = { opts.ctest, '--test-dir', build, '--show-only=json-v1' }
   if config ~= '' then vim.list_extend(command, { '-C', config }) end
   local r = process(command, build)
@@ -78,7 +90,7 @@ local function registrations(build, config)
       covered[vim.uv.fs_realpath(path) or path] = true
     end
     local keys = {}
-    if discovery.framework(test.command, opts.frameworks, cwd) == 'gtest' then
+    if selected(test.command and test.command[1], cwd) and discovery.framework(test.command, opts.frameworks, cwd) == 'gtest' then
       local command, env = vim.deepcopy(test.command), {}
       -- Keep the registration's existing filter and arguments when enumerating.
       command[#command + 1] = '--gtest_list_tests'
@@ -95,7 +107,7 @@ local function registrations(build, config)
   -- not have add_test()/gtest_discover_tests() registrations.
   for _, exe in ipairs(discovery.artifacts(build, config)) do
     local path = vim.uv.fs_realpath(exe) or exe
-    if not covered[path] and discovery.framework({ exe }, opts.frameworks, build) == 'gtest' then
+    if selected(exe, build) and not covered[path] and discovery.framework({ exe }, opts.frameworks, build) == 'gtest' then
       covered[path] = true
       out[#out + 1] = { name = exe, executable = exe, keys = listed({ exe, '--gtest_list_tests' }, build) }
     end
@@ -124,11 +136,33 @@ function M.discover_positions(path)
   local file, definitions = source.definitions(path)
   if #definitions == 0 then return nil end
   local _, build, config = paths(path)
-  local keys = {}
-  if vim.uv.fs_stat(build .. '/CMakeCache.txt') then
-    for _, entry in ipairs(for_files(registrations(build, config), build, config, { [path] = true })) do
-      vim.list_extend(keys, entry.keys)
+  local key = build .. '\0' .. config .. '\0' .. path
+  local cached = position_keys[key]
+  local keys = cached and cached.keys or {}
+  local targets = discovery.selected_targets(build, config, { [path] = true })
+  local fresh, stamp = #targets > 0 and not (unbuilt[build] or {})[path], {}
+  for _, target in ipairs(targets) do
+    for _, exe in ipairs(target.executables) do
+      local binary = vim.uv.fs_stat(exe)
+      stamp[#stamp + 1] = binary and binary.mtime or false
+      for source in pairs(target.files) do
+        local input = vim.uv.fs_stat(source)
+        if not binary or not input or input.mtime.sec > binary.mtime.sec
+          or (input.mtime.sec == binary.mtime.sec and input.mtime.nsec > binary.mtime.nsec) then fresh = false end
+      end
     end
+  end
+  stamp = vim.json.encode(stamp)
+  -- Editing/saving a file must not launch its old binary just to rediscover
+  -- parameter names. Keep known names until a successful build changes it.
+  if (opts.build == false or fresh) and (not cached or cached.stamp ~= stamp) then
+    keys = {}
+    if vim.uv.fs_stat(build .. '/CMakeCache.txt') then
+      for _, entry in ipairs(for_files(registrations(build, config, { [path] = true }), build, config, { [path] = true })) do
+        vim.list_extend(keys, entry.keys)
+      end
+    end
+    position_keys[key] = { stamp = stamp, keys = keys }
   end
   return source.tree(file, definitions, keys)
 end
@@ -189,6 +223,7 @@ function M.discover(context)
       end
     end
   end
+  unbuilt[build] = nil
   builds[root] = { build_dir = build, config = config }
   return { root = root, build_dir = build, config = config, binaries = vim.tbl_count(binaries), cases = count }
 end
@@ -201,7 +236,15 @@ function M.prepare(tree)
     local pos = node:data()
     if pos.type == 'test' or pos.type == 'namespace' then files[pos.path] = true end
   end
+  local affected = vim.deepcopy(files)
+  for _, target in ipairs(discovery.selected_targets(build, config, files)) do
+    for path in pairs(target.files) do affected[path] = true end
+  end
+  unbuilt[build] = unbuilt[build] or {}
+  for path in pairs(affected) do unbuilt[build][path] = true end
   local success, failure = build_selected(root, build, config, files)
+  for path in pairs(affected) do unbuilt[build][path] = not success or nil end
+  if failure then failure.files = affected end
   return success and files or nil, build, config, failure
 end
 
@@ -215,7 +258,7 @@ function M.build_spec(args)
   end
   assert(#tests > 0, 'neotest-cmake: no GoogleTest source positions selected')
   local selected, mappings, specs, matched, debugging = {}, {}, {}, {}, {}
-  for _, reg in ipairs(for_files(registrations(build, config), build, config, files)) do
+  for _, reg in ipairs(for_files(registrations(build, config, files), build, config, files)) do
     local ids = {}
     for _, pos in ipairs(tests) do
       for _, key in ipairs(reg.keys) do
@@ -319,7 +362,8 @@ function M.results(spec, result)
     local out = {}
     for _, id in ipairs(spec.context.tests) do
       out[id] = { status = 'skipped', output = spec.context.build_failure.output,
-        short = spec.context.build_failure.summary .. '; see quickfix' }
+        short = spec.context.build_failure.summary .. '; see quickfix',
+        build_failure = spec.context.build_failure }
     end
     return out
   end
