@@ -2,6 +2,7 @@ local discovery = require('neotest-cmake.discovery')
 local parsers = require('neotest-cmake.parsers')
 local source = require('neotest-cmake.source')
 local M = { name = 'neotest-cmake' }
+local builds = {}
 local runner = vim.fs.dirname(debug.getinfo(1, 'S').source:sub(2)) .. '/runner.lua'
 local opts = { build_dir = 'build', config = '', ctest = 'ctest', discovery_timeout = 10000,
   jobs = 1, frameworks = {}, ctest_args = {} }
@@ -22,15 +23,23 @@ end
 local function paths(path)
   local root = M.root(path)
   assert(root, 'neotest-cmake: no CMake project root found')
+  if builds[root] then return root, builds[root].build_dir, builds[root].config end
   local build = type(opts.build_dir) == 'function' and opts.build_dir(root) or opts.build_dir
-  return root, discovery.join(root, build)
+  return root, discovery.join(root, build), opts.config
 end
 function M.root(path)
+  local known
+  path = vim.fs.normalize(path)
+  for root in pairs(builds) do
+    if (path == root or path:sub(1, #root + 1) == root .. '/') and (not known or #root > #known) then known = root end
+  end
+  if known then return known end
   if opts.root then return type(opts.root) == 'function' and opts.root(path) or opts.root end
   return vim.fs.root(path, { 'CMakePresets.json', '.git' }) or vim.fs.root(path, 'CMakeLists.txt')
 end
 function M.filter_dir(name, relpath, root)
-  local build = type(opts.build_dir) == 'function' and opts.build_dir(root) or opts.build_dir
+  local build = builds[root] and builds[root].build_dir
+    or (type(opts.build_dir) == 'function' and opts.build_dir(root) or opts.build_dir)
   return name ~= '.git' and name ~= 'CMakeFiles' and discovery.join(root, relpath) ~= discovery.join(root, build)
 end
 function M.is_test_file(path)
@@ -41,9 +50,9 @@ function M.is_test_file(path)
 end
 M.discover_positions = source.discover
 
-local function registrations(build)
+local function registrations(build, config)
   local command = { opts.ctest, '--test-dir', build, '--show-only=json-v1' }
-  if opts.config ~= '' then vim.list_extend(command, { '-C', opts.config }) end
+  if config ~= '' then vim.list_extend(command, { '-C', config }) end
   local r = process(command, build)
   assert(r.code == 0, 'neotest-cmake: CTest discovery failed: ' .. (r.stderr or ''))
   local data = vim.json.decode(r.stdout)
@@ -68,11 +77,12 @@ local function registrations(build)
       local listed = process(command, cwd, env)
       if listed.code == 0 then keys = parsers.gtest_list(listed.stdout or '') end
     end
-    out[#out + 1] = { name = test.name, keys = keys, disabled = props.DISABLED }
+    out[#out + 1] = { name = test.name, keys = keys, disabled = props.DISABLED,
+      binary = test.command and test.command[1] }
   end
   -- The same File API fallback as cmake-tests.nvim: executable targets need
   -- not have add_test()/gtest_discover_tests() registrations.
-  for _, exe in ipairs(discovery.artifacts(build, opts.config)) do
+  for _, exe in ipairs(discovery.artifacts(build, config)) do
     local path = vim.uv.fs_realpath(exe) or exe
     if not covered[path] and discovery.framework({ exe }, opts.frameworks, build) == 'gtest' then
       covered[path] = true
@@ -84,11 +94,35 @@ local function registrations(build)
   end
   return out
 end
+
+-- Called after an external CMake build, including preset/external build trees.
+-- Preserve each project's context rather than changing global adapter options.
+function M.discover(context)
+  require('nio').scheduler()
+  local root = vim.uv.fs_realpath(context.root) or vim.fs.normalize(context.root)
+  local build = discovery.join(root, context.build_dir)
+  local config = context.config or opts.config
+  local artifacts = discovery.artifacts(build, config)
+  assert(#artifacts > 0, 'neotest-cmake: no executable targets in CMake File API reply at ' .. build)
+  local entries = registrations(build, config)
+  local binaries, count = {}, 0
+  for _, entry in ipairs(entries) do
+    if #entry.keys > 0 then
+      for _, case in ipairs(entry.keys) do
+        local binary = entry.executable or entry.binary or entry.name
+        binaries[binary] = binaries[binary] or {}
+        if not binaries[binary][case.key] then binaries[binary][case.key] = true; count = count + 1 end
+      end
+    end
+  end
+  builds[root] = { build_dir = build, config = config }
+  return { root = root, build_dir = build, config = config, binaries = vim.tbl_count(binaries), cases = count }
+end
 local function regex(s) return (s:gsub('([\\%.%[%]%^%$%*%+%?%(%){|}])', '\\%1')) end
 
 function M.build_spec(args)
   assert(args.strategy ~= 'dap', 'neotest-cmake: CTest does not support the dap strategy')
-  local _, build = paths(args.tree:data().path)
+  local _, build, config = paths(args.tree:data().path)
   local tests = {}
   for _, node in args.tree:iter_nodes() do
     local pos = node:data()
@@ -96,7 +130,7 @@ function M.build_spec(args)
   end
   assert(#tests > 0, 'neotest-cmake: no GoogleTest source positions selected')
   local selected, mappings, specs, matched = {}, {}, {}, {}
-  for _, reg in ipairs(registrations(build)) do
+  for _, reg in ipairs(registrations(build, config)) do
     local ids = {}
     for _, pos in ipairs(tests) do
       for _, key in ipairs(reg.keys) do
@@ -127,7 +161,7 @@ function M.build_spec(args)
     local report = vim.fn.tempname() .. '.xml'
     local command = { opts.ctest, '--test-dir', build, '--output-on-failure',
       '--output-junit', report, '--parallel', tostring(opts.jobs), '-R', '^(' .. table.concat(selected, '|') .. ')$' }
-    if opts.config ~= '' then vim.list_extend(command, { '-C', opts.config }) end
+    if config ~= '' then vim.list_extend(command, { '-C', config }) end
     vim.list_extend(command, opts.ctest_args)
     vim.list_extend(command, args.extra_args or {})
     table.insert(specs, 1, { command = command, cwd = build, context = { report = report, mappings = mappings, tests = {} } })

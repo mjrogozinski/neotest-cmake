@@ -86,6 +86,25 @@ The root is found using CMakePresets.json or .git, falling back to CMakeLists.tx
 
 Unknown executables are never launched to guess their framework. GoogleTest detection scans binary signatures (up to 64 MiB); use `frameworks` for unusual binaries. Enumeration reuses the registration's command, existing GoogleTest filter, working directory, and `ENVIRONMENT` properties. Registered executables run through CTest; unregistered File API targets run directly from the build directory. Executables already referenced by CTest commands are excluded from direct discovery to preserve their registration semantics.
 
+## Build integration
+
+An external build helper can pass the actual CMake binary directory and configuration to the adapter after a successful build. Call this inside an nvim-nio task:
+
+```lua
+require('nio').run(function()
+  local result = require('neotest-cmake').discover({
+    root = '/path/to/source',
+    build_dir = '/path/to/preset/binary/directory',
+    config = 'Debug',
+  })
+  require('nio').scheduler()
+  vim.notify(('Discovered %d GoogleTest binaries, %d cases in %s')
+    :format(result.binaries, result.cases, result.build_dir))
+end)
+```
+
+This validates the File API executable metadata, enumerates registered and unregistered GoogleTests, and remembers that project's build directory/configuration for subsequent runs in the current Neovim session. The File API query must be present before configuring. Keep `build_dir` configured appropriately for later sessions; it may be a function that resolves your project's compilation database symlink or preset output directory.
+
 ## Selection and limitations
 
 CTest registrations are the execution boundary. For `gtest_discover_tests()`, selecting a source test selects its concrete registrations; parameterized/typed definitions aggregate all matching instantiations. With `add_test(NAME ... COMMAND executable)`, selecting any case runs the entire registration. Individual case output determines results inside a failed group. CTest may also run fixture setup and cleanup registrations.
