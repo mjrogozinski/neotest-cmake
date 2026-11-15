@@ -45,6 +45,7 @@ return function(client)
     local _, adapter_id = client:get_position(tree:data().id, args)
     if vim.startswith(adapter_id or '', 'neotest-cmake:') then
       local files = require('neotest-cmake').prepare(tree)
+      if not files then return end
       for path in pairs(files) do client:_update_positions(path, { adapter = adapter_id }) end
     end
     neotest.run.run(args)

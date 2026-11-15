@@ -179,6 +179,37 @@ require('nio').run(function()
       neotest.cmake.refresh(path)
       assert(changed, reason)
     end
+    if not warmup then
+      local original = require('neotest-cmake.discovery').read(path)
+      local notify, messages = vim.notify, {}
+      local function write(text)
+        local file = assert(io.open(path, 'w')); file:write(text); file:close()
+      end
+      local checked, reason = xpcall(function()
+        write(original .. '\n#error intentional_quickfix_failure\n')
+        vim.notify = function(message) messages[#messages + 1] = message end
+        local previous = run_count
+        neotest.cmake.run(path)
+        nio.sleep(50)
+        assert(run_count == previous, 'consumer ran tests after a failed build')
+        assert(vim.fn.getqflist({ winid = 0 }).winid > 0, 'consumer did not open quickfix')
+        assert(vim.api.nvim_buf_get_name(0) == path, 'quickfix stole focus from the source buffer')
+        -- Standard Neotest/summary actions also stop without throwing, and must
+        -- clear their running state instead of leaving tests stuck as running.
+        invoke('plain Neotest failed build', function() neotest.run.run(path) end)
+        for _, name in ipairs(expected) do
+          local key = path .. '::' .. name
+          assert(concrete[key] and concrete[key].status == 'skipped', 'stale test executable ran')
+          assert(not client:is_running(key, { adapter = id }), 'blocked test is still running')
+        end
+        assert(#messages == 0, 'build failure emitted an error notification: ' .. vim.inspect(messages))
+      end, debug.traceback)
+      vim.notify = notify
+      write(original)
+      invoke('rebuild after compiler error', function() neotest.cmake.run(path) end)
+      assert(#vim.fn.getqflist() == 0, 'successful build left stale quickfix diagnostics')
+      assert(checked, reason)
+    end
     if warmup and mappings['<leader>iA'] then
       invoke('<leader>iA', function() end)
       assert(concrete[root .. '/tests/ranges_test.cpp::Ranges.EmptyInput'].status == 'passed')

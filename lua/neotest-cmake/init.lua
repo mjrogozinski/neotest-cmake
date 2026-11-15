@@ -1,6 +1,7 @@
 local discovery = require('neotest-cmake.discovery')
 local parsers = require('neotest-cmake.parsers')
 local source = require('neotest-cmake.source')
+local diagnostics = require('neotest-cmake.diagnostics')
 local M = { name = 'neotest-cmake' }
 local builds, listings, build_locks = {}, {}, {}
 local runner = vim.fs.dirname(debug.getinfo(1, 'S').source:sub(2)) .. '/runner.lua'
@@ -133,29 +134,39 @@ function M.discover_positions(path)
 end
 
 local function build_selected(root, build, config, files)
-  if opts.build == false then return end
+  if opts.build == false then return true end
   local nio = require('nio')
   build_locks[build] = build_locks[build] or nio.control.semaphore(1)
+  local failure
   build_locks[build].with(function()
-    assert(vim.uv.fs_stat(build .. '/CMakeCache.txt'),
-      'neotest-cmake: configure the CMake build first: ' .. build)
+    if not vim.uv.fs_stat(build .. '/CMakeCache.txt') then
+      failure = diagnostics.report(root, build, 'configure', {
+        code = 1, stderr = 'Configure the CMake build first: ' .. build })
+      return
+    end
     if #discovery.targets(build, config) == 0 then
       local query = build .. '/.cmake/api/v1/query'
       vim.fn.mkdir(query, 'p')
       vim.fn.writefile({}, query .. '/codemodel-v2')
       local r = process({ opts.cmake, '-S', root, '-B', build }, root, nil, opts.build_timeout)
-      assert(r.code == 0, 'neotest-cmake: configure failed; tests not run:\n' .. (r.stdout or '') .. (r.stderr or ''))
+      if r.code ~= 0 then failure = diagnostics.report(root, build, 'configure', r); return end
     end
     local targets = discovery.selected_targets(build, config, files)
-    assert(#targets > 0, 'neotest-cmake: no executable target owns the selected test sources in ' .. build)
+    if #targets == 0 then
+      failure = diagnostics.report(root, build, 'configure', {
+        code = 1, stderr = 'No executable target owns the selected test sources in ' .. build })
+      return
+    end
     local command = { opts.cmake, '--build', build }
     if config ~= '' then vim.list_extend(command, { '--config', config }) end
     command[#command + 1] = '--target'
     for _, target in ipairs(targets) do command[#command + 1] = target.name end
     local r = process(command, root, nil, opts.build_timeout)
-    assert(r.code == 0, 'neotest-cmake: build failed; tests not run:\n' .. (r.stdout or '') .. (r.stderr or ''))
+    if r.code ~= 0 then failure = diagnostics.report(root, build, 'build', r); return end
     listings = {}
+    diagnostics.clear(root, build)
   end)
+  return not failure, failure
 end
 
 -- Called after an external CMake build, including preset/external build trees.
@@ -190,12 +201,13 @@ function M.prepare(tree)
     local pos = node:data()
     if pos.type == 'test' or pos.type == 'namespace' then files[pos.path] = true end
   end
-  build_selected(root, build, config, files)
-  return files, build, config
+  local success, failure = build_selected(root, build, config, files)
+  return success and files or nil, build, config, failure
 end
 
 function M.build_spec(args)
-  local files, build, config = M.prepare(args.tree)
+  local files, build, config, failure = M.prepare(args.tree)
+  if not files then return diagnostics.blocked(args.tree, failure) end
   local tests = {}
   for _, node in args.tree:iter_nodes() do
     local pos = node:data()
@@ -303,6 +315,14 @@ function M.build_spec(args)
 end
 
 function M.results(spec, result)
+  if spec.context.build_failure then
+    local out = {}
+    for _, id in ipairs(spec.context.tests) do
+      out[id] = { status = 'skipped', output = spec.context.build_failure.output,
+        short = spec.context.build_failure.summary .. '; see quickfix' }
+    end
+    return out
+  end
   if spec.context.runs then
     local out = {}
     for _, run in ipairs(spec.context.runs) do

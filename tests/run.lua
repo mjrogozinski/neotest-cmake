@@ -145,10 +145,24 @@ require('nio').run(function()
       write(original .. '\n#error intentional_build_failure\n')
       local unrelated = run(only)
       assert(unrelated[only:data().id].status == 'passed', 'built an unrelated broken binary')
-      local built, message = pcall(adapter.build_spec, { tree = nearest, strategy = 'integrated' })
-      assert(not built and tostring(message):find('build failed; tests not run', 1, true), tostring(message))
+      local blocked = adapter.build_spec({ tree = nearest, strategy = 'integrated' })
+      assert(blocked.context.build_failure, 'failed build produced a runnable test spec')
+      assert(#blocked.command == 0 and type(blocked.strategy) == 'function', 'stale binary could run')
+      local qf = vim.fn.getqflist({ items = 0, title = 0, winid = 0 })
+      assert(qf.title == 'CMake build failed; tests not run' and qf.winid > 0, 'quickfix did not open')
+      local diagnostic
+      for _, item in ipairs(qf.items) do
+        if vim.api.nvim_buf_get_name(item.bufnr) == broken_path and item.text:find('intentional_build_failure', 1, true) then
+          diagnostic = item
+        end
+      end
+      assert(diagnostic and diagnostic.lnum > 0 and diagnostic.type == 'E', 'missing clickable compiler error')
+      local instance = blocked.strategy()
+      local skipped = adapter.results(blocked, { code = instance.result(), output = instance.output() })
+      assert(skipped[nearest:data().id].status == 'skipped', 'blocked tests must not report a stale pass')
       write(original .. '\nINSTANTIATE_TEST_SUITE_P(Added, DirectValues, testing::Values(4));\n')
       adapter.prepare(nearest)
+      assert(#vim.fn.getqflist() == 0, 'successful rebuild left stale compiler diagnostics')
       local updated = assert(adapter.discover_positions(broken_path))
       concrete(updated, 'unregistered.cpp', 'Added/DirectValues.Positive/0')
     end, debug.traceback)
