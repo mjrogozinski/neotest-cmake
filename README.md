@@ -132,7 +132,7 @@ The adapter does assume:
 For example, this layout works, but the names are only illustrative:
 
 ```text
-foo/
+project/
 ├── CMakeLists.txt
 ├── source/
 │   └── checks.cpp
@@ -146,7 +146,7 @@ This example expects GoogleTest to be installed and discoverable by CMake. You c
 
 ```cmake
 cmake_minimum_required(VERSION 3.21)
-project(foo LANGUAGES CXX)
+project(example LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -305,16 +305,16 @@ The adapter builds the selected directory with `cmake --build`; it does not read
 <details>
 <summary>Integrating an external build tool</summary>
 
-`foo` below is a placeholder for any independent CMake project. After a successful external build, pass its actual context inside an nvim-nio task:
+After a successful external build, pass its actual context inside an nvim-nio task:
 
 ```lua
 require("nio").run(function()
   require("neotest-cmake").discover({
-    root = "/path/to/foo",
-    build_dir = "/path/to/foo/build",
+    root = "/path/to/source",
+    build_dir = "/path/to/build",
     config = "Debug",
   })
-  require("neotest").cmake.refresh("/path/to/foo")
+  require("neotest").cmake.refresh("/path/to/source")
 end)
 ```
 
