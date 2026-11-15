@@ -41,7 +41,7 @@ function M.framework(command, overrides, cwd)
   file:close()
   return found
 end
-function M.artifacts(build, config)
+function M.targets(build, config)
   local base = build .. '/.cmake/api/v1/reply/'
   local indexes = vim.fn.glob(base .. 'index-*.json', false, true)
   table.sort(indexes)
@@ -55,13 +55,49 @@ function M.artifacts(build, config)
     if not config or config == '' or cfg.name == config then
       for _, ref in ipairs(cfg.targets or {}) do
         local target = M.json(base .. ref.jsonFile)
-        if target and target.type == 'EXECUTABLE' then
-          for _, artifact in ipairs(target.artifacts or {}) do out[#out + 1] = M.join(build, artifact.path) end
+        if target then
+          target.files, target.executables = {}, {}
+          for _, source in ipairs(target.sources or {}) do
+            local basepath = source.isGenerated and model.paths.build or model.paths.source
+            target.files[M.join(basepath, source.path)] = true
+          end
+          if target.type == 'EXECUTABLE' then
+            for _, artifact in ipairs(target.artifacts or {}) do
+              target.executables[#target.executables + 1] = M.join(build, artifact.path)
+            end
+          end
+          out[#out + 1] = target
         end
       end
       if not config or config == '' then break end
     end
   end
   return out
+end
+function M.artifacts(build, config)
+  local out = {}
+  for _, target in ipairs(M.targets(build, config)) do
+    vim.list_extend(out, target.executables)
+  end
+  return out
+end
+
+-- Include executables linking a library that owns a selected source file.
+function M.selected_targets(build, config, files)
+  local targets, by_id, selected = M.targets(build, config), {}, {}
+  for _, target in ipairs(targets) do by_id[target.id] = target end
+  local function owns(target, seen)
+    if seen[target.id] then return false end
+    seen[target.id] = true
+    for path in pairs(files) do if target.files[path] then return true end end
+    for _, dep in ipairs(target.dependencies or {}) do
+      if by_id[dep.id] and owns(by_id[dep.id], seen) then return true end
+    end
+    return false
+  end
+  for _, target in ipairs(targets) do
+    if #target.executables > 0 and owns(target, {}) then selected[#selected + 1] = target end
+  end
+  return selected
 end
 return M
