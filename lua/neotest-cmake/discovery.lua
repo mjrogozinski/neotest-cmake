@@ -28,7 +28,14 @@ function M.framework(command, overrides, cwd)
     local chunk = file:read(65536)
     if not chunk then break end
     local text = tail .. chunk
-    if text:find('gtest_list_tests', 1, true) then found = 'gtest'; break end
+    -- Static builds contain the flag string. Shared builds (notably Nix)
+    -- instead retain their GoogleTest library dependency names in the binary.
+    if text:find('gtest_list_tests', 1, true)
+      or text:match('libgtest[^%z/%s]*%.dylib')
+      or text:match('libgtest[^%z/%s]*%.so')
+      or text:match('gtest[^%z/%s]*%.dll') then
+      found = 'gtest'; break
+    end
     tail = text:sub(-64)
   end
   file:close()

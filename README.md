@@ -84,7 +84,7 @@ require('neotest-cmake')({
 
 The root is found using CMakePresets.json or .git, falling back to CMakeLists.txt. Set `root` explicitly for nested projects. `build_dir` may also be a function of the root. Supply the preset's binary directory explicitly when using presets. Configuration is shared by this adapter instance.
 
-Unknown executables are never launched to guess their framework. GoogleTest detection scans binary signatures (up to 64 MiB); use `frameworks` for unusual binaries. Enumeration reuses the registration's command, existing GoogleTest filter, working directory, and `ENVIRONMENT` properties. Registered executables run through CTest; unregistered File API targets run directly from the build directory. Executables already referenced by CTest commands are excluded from direct discovery to preserve their registration semantics.
+Unknown executables are never launched to guess their framework. GoogleTest detection scans static flag strings and shared-library dependency names (up to 64 MiB), including Nix-linked dylibs; use `frameworks` for unusual binaries. Enumeration reuses the registration's command, existing GoogleTest filter, working directory, and `ENVIRONMENT` properties. Registered executables run through CTest; unregistered File API targets run directly from the build directory. Executables already referenced by CTest commands are excluded from direct discovery to preserve their registration semantics.
 
 ## Build integration
 

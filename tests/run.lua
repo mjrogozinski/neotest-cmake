@@ -8,6 +8,20 @@ require('nio').run(function()
     for _, node in tree:iter_nodes() do if node:data().type == 'test' then count = count + 1 end end
     assert(count == 6, 'expected six real macro definitions, got ' .. count)
     assert(adapter.is_test_file(root .. '/cases.cpp'))
+    local detection = require('neotest-cmake.discovery')
+    for _, signature in ipairs({
+      '/nix/store/example-gtest/lib/libgtest_main.1.18.0.dylib',
+      'libgtest.so.1.14.0', 'gtest_main.dll',
+    }) do
+      local binary = vim.fn.tempname()
+      local file = assert(io.open(binary, 'wb'))
+      -- Straddle a scan chunk to exercise the overlap used by detection.
+      file:write(string.rep('\0', 65530) .. signature .. '\0')
+      file:close()
+      assert(detection.framework({ binary }, {}, root) == 'gtest', 'missed shared library signature: ' .. signature)
+      assert(detection.framework({ binary }, { [binary] = 'ctest' }, root) == nil, 'framework override ignored')
+      os.remove(binary)
+    end
     local function run(selected)
       local built = adapter.build_spec({ tree = selected, strategy = 'integrated' })
       local specs = built.command and { built } or built
