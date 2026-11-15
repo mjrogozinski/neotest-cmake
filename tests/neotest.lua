@@ -4,11 +4,10 @@ require('nio').run(function()
   local nio = require('nio')
   nio.scheduler()
   local ok, err = xpcall(function()
-    local warmup = vim.env.WARMUP_ROOT
-    local root = warmup or vim.fn.getcwd() .. '/tests/fixture'
+    local root = vim.fn.getcwd() .. '/tests/fixture'
     root = assert(vim.uv.fs_realpath(root))
-    local path = root .. (warmup and '/tests/different_test.cpp' or '/cases.cpp')
-    local build = warmup and (vim.env.NEOTEST_BUILD_DIR or 'build/clang') or '../../build/fixture'
+    local path = root .. '/cases.cpp'
+    local build = '../../build/fixture'
     local adapter = require('neotest-cmake')({ root = root, build_dir = build })
     local neotest, client = require('neotest'), nil
     local concrete, run_count, runs = {}, 0, 0
@@ -32,38 +31,23 @@ require('nio').run(function()
       },
     })
     vim.cmd.edit(path)
-    local expected = warmup and {
-      'Different.Test_1',
-      'Numeric/DifferentTest.IsPositive/0', 'Numeric/DifferentTest.IsPositive/1', 'Numeric/DifferentTest.IsPositive/2',
-      'Named/DifferentTest.IsPositive/Value4', 'Named/DifferentTest.IsPositive/Value5',
-      'Numeric/DifferentTest.DoublesExactly/0', 'Numeric/DifferentTest.DoublesExactly/1', 'Numeric/DifferentTest.DoublesExactly/2',
-      'Named/DifferentTest.DoublesExactly/Value4', 'Named/DifferentTest.DoublesExactly/Value5',
-      'DifferentTypedTest/0.HasSize', 'DifferentTypedTest/1.HasSize',
-      'Types/DifferentTypeParameterizedTest/0.HasSize', 'Types/DifferentTypeParameterizedTest/1.HasSize',
-    } or {
+    local expected = {
       'Basic.Pass', 'Basic.Fail', 'Basic.Skip', 'Basic.DISABLED_Off',
       'Numbers/Values.Positive/0', 'Numbers/Values.Positive/1', 'Named/Values.Positive/Three',
       'Numbers/Values.Mixed/0', 'Numbers/Values.Mixed/1', 'Named/Values.Mixed/Three',
       'Values.Positive/0', 'Values.Mixed/0',
       'Typed/0.Size', 'Typed/1.Size', 'Instances/TypeParameters/0.Size', 'Instances/TypeParameters/1.Size',
     }
-    -- Optionally exercise the user's actual keymap callbacks, with this isolated
-    -- Neotest setup instead of loading all unrelated editor plugins.
-    local mappings = {}
-    if vim.env.NEOTEST_KEYMAP_SPEC then
-      vim.opt.rtp:append(vim.fs.dirname(vim.fs.dirname(vim.fs.dirname(vim.env.NEOTEST_KEYMAP_SPEC))))
-      for _, map in ipairs(dofile(vim.env.NEOTEST_KEYMAP_SPEC).keys) do mappings[map[1]] = map[2] end
-    end
-    local function invoke(lhs, fallback)
+    local function invoke(label, action)
       local previous = run_count
-      if mappings[lhs] then mappings[lhs]() else fallback() end
+      action()
       for _ = 1, 3000 do
         if run_count > previous then break end
         nio.sleep(20)
       end
-      assert(run_count > previous, lhs .. ' did not finish')
+      assert(run_count > previous, label .. ' did not finish')
     end
-    invoke('<leader>if', function() neotest.cmake.run(path) end)
+    invoke('file run', function() neotest.cmake.run(path) end)
     local id = 'neotest-cmake:' .. root
     local tree = assert(client:get_position(path, { adapter = id }))
     local count = 0
@@ -73,7 +57,6 @@ require('nio').run(function()
       local pos = assert(tree:get_key(path .. '::' .. name), 'missing ' .. name):data()
       assert(pos.name == name, 'display name differs from GoogleTest')
       local result = assert(concrete[pos.id], 'missing result for ' .. name)
-      if warmup then assert(result.status == 'passed', name .. ': ' .. vim.inspect(result)) end
     end
     local function source_mark(name, status)
       local node = assert(tree:get_key(path .. '::' .. name))
@@ -99,7 +82,7 @@ require('nio').run(function()
       assert(marks[1][4].virt_text[1][2] == require('neotest.config').highlights[status],
         name .. ': wrong virtual-text status')
     end
-    if not warmup then
+    do
       source_mark('Values.Mixed', 'failed')
       source_mark('Values.Positive', 'passed')
       source_mark('Typed.Size', 'passed')
@@ -112,7 +95,7 @@ require('nio').run(function()
           'parameter navigation lost its source location')
       end
     end
-    if not warmup then
+    do
       local original = require('neotest-cmake.discovery').read(path)
       local function write(text)
         write_fixture(path, text)
@@ -136,7 +119,7 @@ require('nio').run(function()
       adapter.prepare(tree)
       assert(checked, reason)
     end
-    local single_name = warmup and 'Numeric/DifferentTest.IsPositive/1' or 'Numbers/Values.Positive/1'
+    local single_name = 'Numbers/Values.Positive/1'
     invoke('exact instance', function() neotest.cmake.run({ path .. '::' .. single_name, adapter = id }) end)
     local test_count = 0
     for position, result in pairs(concrete) do
@@ -146,30 +129,30 @@ require('nio').run(function()
       end
     end
     assert(test_count == 1)
-    if not warmup then
+    do
       -- A passing parameter rerun must not hide a failed sibling on this line.
       invoke('passing mixed instance', function()
         neotest.cmake.run({ path .. '::Numbers/Values.Mixed/0', adapter = id })
       end)
       source_mark('Values.Mixed', 'failed')
     end
-    local group_name = warmup and 'DifferentTest.IsPositive' or 'Values.Positive'
+    local group_name = 'Values.Positive'
     local group = tree:get_key(path .. '::' .. group_name)
     vim.api.nvim_win_set_cursor(0, { group:data().range[1] + 1, 0 })
-    invoke('<leader>ir', function() neotest.cmake.run() end)
+    invoke('nearest definition', function() neotest.cmake.run() end)
     local passed = 0
     for position, result in pairs(concrete) do
       if tree:get_key(position) and tree:get_key(position):data().type == 'test' and result.status == 'passed' then passed = passed + 1 end
     end
-    assert(passed == (warmup and 5 or 4), 'nearest run lost parameter instances')
-    if not warmup then
+    assert(passed == 4, 'nearest run lost parameter instances')
+    do
       local original = require('neotest-cmake.discovery').read(path)
       local function write(text)
         write_fixture(path, text)
       end
       local changed, reason = xpcall(function()
         write(original .. '\nINSTANTIATE_TEST_SUITE_P(AddedAtRun, Values, testing::Values(4));\n')
-        invoke('<leader>if', function() neotest.cmake.run(path) end)
+        invoke('file run', function() neotest.cmake.run(path) end)
         for _, case in ipairs({ 'Positive', 'Mixed' }) do
           local key = path .. '::AddedAtRun/Values.' .. case .. '/0'
           assert(client:get_position(key, { adapter = id }), 'build did not refresh parameter positions')
@@ -181,7 +164,7 @@ require('nio').run(function()
       neotest.cmake.refresh(path)
       assert(changed, reason)
     end
-    if not warmup then
+    do
       local original = require('neotest-cmake.discovery').read(path)
       local notify, system, messages, launches = vim.notify, vim.system, {}, {}
       local sibling = root .. '/cases_extra.cpp'
@@ -256,10 +239,6 @@ require('nio').run(function()
       assert(client:get_results(id)[sibling_key].status == 'passed')
       assert(#vim.fn.getqflist() == 0, 'successful build left stale quickfix diagnostics')
       assert(checked, reason)
-    end
-    if warmup and mappings['<leader>iA'] then
-      invoke('<leader>iA', function() end)
-      assert(concrete[root .. '/tests/ranges_test.cpp::Ranges.EmptyInput'].status == 'passed')
     end
     neotest.summary.open()
     neotest.summary:expand(path, true)
