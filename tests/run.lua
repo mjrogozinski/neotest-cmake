@@ -9,13 +9,20 @@ require('nio').run(function()
     assert(count == 6, 'expected six real macro definitions, got ' .. count)
     assert(adapter.is_test_file(root .. '/cases.cpp'))
     local function run(selected)
-      local spec = adapter.build_spec({ tree = selected, strategy = 'integrated' })
-      local r = vim.system(spec.command, { cwd = spec.cwd, text = true }):wait()
-      local output = vim.fn.tempname()
-      vim.fn.writefile(vim.split((r.stdout or '') .. (r.stderr or ''), '\n'), output)
-      local results = adapter.results(spec, { code = r.code, output = output })
-      os.remove(output)
-      return results, spec
+      local built = adapter.build_spec({ tree = selected, strategy = 'integrated' })
+      local specs = built.command and { built } or built
+      local results = {}
+      for _, spec in ipairs(specs) do
+        local r = vim.system(spec.command, { cwd = spec.cwd, text = true }):wait()
+        local output = vim.fn.tempname()
+        vim.fn.writefile(vim.split((r.stdout or '') .. (r.stderr or ''), '\n'), output)
+        for id, result in pairs(adapter.results(spec, { code = r.code, output = output })) do
+          assert(not results[id], 'multiple specs reported ' .. id)
+          results[id] = result
+        end
+        os.remove(output)
+      end
+      return results, built
     end
     local results = run(tree)
     local expected = { ['Basic.Pass'] = 'passed', ['Basic.Fail'] = 'failed', ['Basic.Skip'] = 'skipped',
@@ -41,6 +48,30 @@ require('nio').run(function()
     assert(policy[root .. '/policy.cpp::Policy.ExpectedFailure'].status == 'passed')
     assert(policy[root .. '/policy.cpp::Policy.Timeout'].status == 'failed')
     assert(policy[root .. '/policy.cpp::Policy.SkipRule'].status == 'skipped')
+    local direct_tree = adapter.discover_positions(root .. '/unregistered.cpp')
+    local direct, direct_spec = run(direct_tree)
+    assert(direct_spec.context.direct, 'unregistered target must run directly')
+    for name, status in pairs({ ['Direct.Pass'] = 'passed', ['Direct.Fail'] = 'failed',
+      ['Direct.Skip'] = 'skipped', ['Direct.DISABLED_Off'] = 'skipped',
+      ['DirectValues.Positive'] = 'passed', ['DirectTyped.Size'] = 'passed' }) do
+      assert(direct[root .. '/unregistered.cpp::' .. name].status == status, name .. ' direct result mismatch')
+    end
+    local nearest = direct_tree:get_key(root .. '/unregistered.cpp::Direct.Pass')
+    local nearest_results, nearest_spec = run(nearest)
+    assert(vim.tbl_count(nearest_results) == 1 and nearest_results[nearest:data().id].status == 'passed')
+    assert(nearest_spec.command[3] == '--gtest_filter=Direct.Pass', 'direct run included unrelated failing case')
+    local second = adapter.discover_positions(root .. '/second.cpp')
+    local mixed = require('neotest.types').Tree.from_list({
+      { id = root, path = root, name = 'fixture', type = 'dir' },
+      tree:to_list(), direct_tree:to_list(), second:to_list(),
+    }, function(pos) return pos.id end)
+    local mixed_results, mixed_specs = run(mixed)
+    assert(#mixed_specs.context.runs == 3, 'expected one CTest batch and two direct binaries')
+    assert(not mixed_specs.context.runs[1].context.direct, 'registered executables must retain CTest semantics')
+    assert(vim.tbl_count(mixed_results) == 13, 'mixed run lost results')
+    assert(mixed_results[root .. '/cases.cpp::Basic.Pass'].status == 'passed')
+    assert(mixed_results[root .. '/unregistered.cpp::Direct.Pass'].status == 'passed')
+    assert(mixed_results[root .. '/second.cpp::SecondBinary.Pass'].status == 'passed')
     print('All adapter integration checks passed')
   end, debug.traceback)
   require('nio').scheduler()

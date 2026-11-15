@@ -2,6 +2,7 @@ local discovery = require('neotest-cmake.discovery')
 local parsers = require('neotest-cmake.parsers')
 local source = require('neotest-cmake.source')
 local M = { name = 'neotest-cmake' }
+local runner = vim.fs.dirname(debug.getinfo(1, 'S').source:sub(2)) .. '/runner.lua'
 local opts = { build_dir = 'build', config = '', ctest = 'ctest', discovery_timeout = 10000,
   jobs = 1, frameworks = {}, ctest_args = {} }
 
@@ -46,11 +47,15 @@ local function registrations(build)
   local r = process(command, build)
   assert(r.code == 0, 'neotest-cmake: CTest discovery failed: ' .. (r.stderr or ''))
   local data = vim.json.decode(r.stdout)
-  local out = {}
+  local out, covered = {}, {}
   for _, test in ipairs(data.tests or {}) do
     local props = {}
     for _, p in ipairs(test.properties or {}) do props[p.name] = p.value end
     local cwd = props.WORKING_DIRECTORY or build
+    for _, arg in ipairs(test.command or {}) do
+      local path = discovery.join(cwd, arg)
+      covered[vim.uv.fs_realpath(path) or path] = true
+    end
     local keys = {}
     if discovery.framework(test.command, opts.frameworks, cwd) == 'gtest' then
       local command, env = vim.deepcopy(test.command), {}
@@ -65,6 +70,18 @@ local function registrations(build)
     end
     out[#out + 1] = { name = test.name, keys = keys, disabled = props.DISABLED }
   end
+  -- The same File API fallback as cmake-tests.nvim: executable targets need
+  -- not have add_test()/gtest_discover_tests() registrations.
+  for _, exe in ipairs(discovery.artifacts(build, opts.config)) do
+    local path = vim.uv.fs_realpath(exe) or exe
+    if not covered[path] and discovery.framework({ exe }, opts.frameworks, build) == 'gtest' then
+      covered[path] = true
+      local listed = process({ exe, '--gtest_list_tests' }, build)
+      if listed.code == 0 then
+        out[#out + 1] = { name = exe, executable = exe, keys = parsers.gtest_list(listed.stdout or '') }
+      end
+    end
+  end
   return out
 end
 local function regex(s) return (s:gsub('([\\%.%[%]%^%$%*%+%?%(%){|}])', '\\%1')) end
@@ -78,7 +95,7 @@ function M.build_spec(args)
     if pos.type == 'test' then tests[#tests + 1] = pos end
   end
   assert(#tests > 0, 'neotest-cmake: no GoogleTest source positions selected')
-  local selected, mappings = {}, {}
+  local selected, mappings, specs, matched = {}, {}, {}, {}
   for _, reg in ipairs(registrations(build)) do
     local ids = {}
     for _, pos in ipairs(tests) do
@@ -90,27 +107,88 @@ function M.build_spec(args)
       end
     end
     if next(ids) then
-      selected[#selected + 1] = regex(reg.name)
-      mappings[reg.name] = ids
+      for id in pairs(ids) do matched[id] = true end
+      if reg.executable then
+        local keys, disabled = {}, {}
+        for _, key in ipairs(reg.keys) do disabled[key.key] = key.disabled end
+        for _, values in pairs(ids) do vim.list_extend(keys, values) end
+        table.sort(keys)
+        local command = { reg.executable, '--gtest_color=no', '--gtest_filter=' .. table.concat(keys, ':') }
+        vim.list_extend(command, args.extra_args or {})
+        specs[#specs + 1] = { command = command, cwd = build,
+          context = { direct = true, mappings = ids, disabled = disabled, tests = {} } }
+      else
+        selected[#selected + 1] = regex(reg.name)
+        mappings[reg.name] = ids
+      end
     end
   end
-  assert(#selected > 0, 'neotest-cmake: no matching CTest registrations; configure/build first and register tests with CTest')
-  local report = vim.fn.tempname() .. '.xml'
-  local command = { opts.ctest, '--test-dir', build, '--output-on-failure',
-    '--output-junit', report, '--parallel', tostring(opts.jobs), '-R', '^(' .. table.concat(selected, '|') .. ')$' }
-  if opts.config ~= '' then vim.list_extend(command, { '-C', opts.config }) end
-  vim.list_extend(command, opts.ctest_args)
-  vim.list_extend(command, args.extra_args or {})
-  return { command = command, cwd = build, context = { report = report, mappings = mappings, tests = tests } }
+  if #selected > 0 then
+    local report = vim.fn.tempname() .. '.xml'
+    local command = { opts.ctest, '--test-dir', build, '--output-on-failure',
+      '--output-junit', report, '--parallel', tostring(opts.jobs), '-R', '^(' .. table.concat(selected, '|') .. ')$' }
+    if opts.config ~= '' then vim.list_extend(command, { '-C', opts.config }) end
+    vim.list_extend(command, opts.ctest_args)
+    vim.list_extend(command, args.extra_args or {})
+    table.insert(specs, 1, { command = command, cwd = build, context = { report = report, mappings = mappings, tests = {} } })
+  end
+  assert(#specs > 0, 'neotest-cmake: no matching test executables in ' .. build
+    .. '; build first. For unregistered targets, create build/.cmake/api/v1/query/codemodel-v2 and reconfigure CMake (or use <leader>iB in the installed config).')
+  -- Neotest merges results from multiple specs. Only one spec reports each
+  -- unmatched source definition, so a skip cannot overwrite another run's pass.
+  for _, pos in ipairs(tests) do
+    if not matched[pos.id] then specs[1].context.tests[#specs[1].context.tests + 1] = pos end
+  end
+  if #specs == 1 then return specs[1] end
+  -- Older neotest runners share process keys/output paths across specs for a
+  -- single tree. Use one strategy process and execute its argv lists in order.
+  local manifest = vim.fn.tempname() .. '.json'
+  local commands = {}
+  for _, spec in ipairs(specs) do
+    spec.context.output = vim.fn.tempname()
+    commands[#commands + 1] = { command = spec.command, cwd = spec.cwd, output = spec.context.output }
+  end
+  vim.fn.writefile({ vim.json.encode(commands) }, manifest)
+  return { command = { vim.v.progpath, '--headless', '-u', 'NONE', '-i', 'NONE', '-l', runner, manifest },
+    cwd = build, context = { runs = specs, manifest = manifest } }
 end
 
 function M.results(spec, result)
-  local xml = discovery.read(spec.context.report)
+  if spec.context.runs then
+    local out = {}
+    for _, run in ipairs(spec.context.runs) do
+      local collected = M.results(run, { code = result.code, output = run.context.output })
+      for id, value in pairs(collected) do
+        value.output = result.output
+        -- A source definition can be compiled into more than one binary.
+        local rank = { skipped = 1, passed = 2, failed = 3 }
+        if not out[id] or rank[value.status] > rank[out[id].status] then out[id] = value end
+      end
+      os.remove(run.context.output)
+    end
+    os.remove(spec.context.manifest)
+    return out
+  end
+  local xml = spec.context.report and discovery.read(spec.context.report)
   local out, seen, rank = {}, {}, { skipped = 1, passed = 2, failed = 3 }
   local function add(id, status, message)
     if not out[id] or rank[status] > rank[out[id].status] then
       out[id] = { status = status, output = result.output, short = message }
     end
+  end
+  if spec.context.direct then
+    local text = discovery.read(result.output) or ''
+    local cases = {}
+    for _, case in ipairs(parsers.results(text)) do cases[case.key] = case end
+    for id, keys in pairs(spec.context.mappings) do
+      for _, key in ipairs(keys) do
+        local case = cases[key]
+        add(id, case and case.status or spec.context.disabled[key] and 'skipped' or 'failed',
+          case and case.output or 'No result for ' .. key .. '; inspect process output')
+      end
+    end
+    for _, pos in ipairs(spec.context.tests) do add(pos.id, 'skipped', 'No matching built test') end
+    return out
   end
   for _, row in ipairs(parsers.junit(xml or '')) do
     seen[row.name] = true
@@ -138,7 +216,7 @@ function M.results(spec, result)
     end
   end
   for _, pos in ipairs(spec.context.tests) do
-    if not out[pos.id] then add(pos.id, 'skipped', 'No matching CTest registration') end
+    if not out[pos.id] then add(pos.id, 'skipped', 'No matching built test') end
   end
   if xml then os.remove(spec.context.report) end
   return out
