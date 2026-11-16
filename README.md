@@ -126,7 +126,7 @@ The adapter does assume:
 1. **A CMake project root.** It searches upward for `CMakePresets.json` or `.git`, falling back to `CMakeLists.txt`. Set `root` explicitly for a nested project or monorepo where those markers identify the wrong directory.
 2. **A configured build tree.** `build_dir` defaults to `build`, relative to the project root. Set it for any other layout; absolute paths outside the source tree are supported. The adapter does not choose a preset for you.
 3. **File API target metadata.** The build tree must provide a `codemodel-v2` reply. The commands below request it. For an already configured build without a reply, the adapter requests the metadata and reconfigures using that build's existing cache.
-4. **Explicit source ownership.** Test source files must appear in the File API's target sources, either directly in an executable or in a linked library. For tests defined in headers, list those headers in `target_sources()` so CMake records their ownership.
+4. **Explicit source ownership.** Test source files must appear in the File API's target sources, either directly in an executable or in a linked library. For tests defined in headers, list those headers in the consuming executable's `target_sources()` so CMake records their ownership. Headers supplied only through interface libraries may be absent from the File API codemodel; see the [real-project trials](docs/real-project-trials.md).
 5. **GoogleTest source definitions.** Discovery recognizes `TEST`, `TEST_F`, `TEST_P`, `TYPED_TEST`, and `TYPED_TEST_P`. It scans `.c`, `.cc`, `.cpp`, `.cxx`, `.h`, `.hpp`, and `.hxx` files with the C++ parser.
 
 For example, this layout works, but the names are only illustrative:
@@ -364,6 +364,8 @@ With the Lua dependencies, `cpp` parser, and GoogleTest available:
 ```sh
 make test
 ```
+
+For measured results and known limitations on upstream Abseil and LevelDB, see [Real-world GoogleTest trials](docs/real-project-trials.md).
 
 The suite uses compiled GoogleTest fixtures and real CMake, CTest, Neotest runners, summary rendering, source signs, and quickfix lists. It covers parameter discovery/selection, independent results, source ownership through linked libraries, stale-binary prevention, failure recovery, and debugger launch specifications. Debugger launch tests do not require a live debugger session.
 

@@ -1,4 +1,5 @@
 local M = {}
+local models = {}
 local function read(path)
   local fd = io.open(path, 'rb')
   if not fd then return nil end
@@ -45,7 +46,12 @@ function M.targets(build, config)
   local base = build .. '/.cmake/api/v1/reply/'
   local indexes = vim.fn.glob(base .. 'index-*.json', false, true)
   table.sort(indexes)
-  local index = M.json(indexes[#indexes] or '')
+  local index_path = indexes[#indexes]
+  local stat = index_path and vim.uv.fs_stat(index_path)
+  local key = build .. '\0' .. (config or '')
+  local signature = stat and vim.json.encode({ index_path, stat.size, stat.mtime })
+  if signature and models[key] and models[key].signature == signature then return models[key].targets end
+  local index = M.json(index_path or '')
   if not index then return {} end
   local modelref = index.reply and index.reply['codemodel-v2']
   local model = modelref and M.json(base .. modelref.jsonFile)
@@ -88,6 +94,7 @@ function M.targets(build, config)
     end
   end
   for _, target in ipairs(out) do collect(target, {}) end
+  if signature then models[key] = { signature = signature, targets = out } end
   return out
 end
 function M.artifacts(build, config)

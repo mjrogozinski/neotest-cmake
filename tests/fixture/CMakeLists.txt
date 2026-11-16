@@ -28,3 +28,8 @@ add_library(second_cases OBJECT second.cpp)
 target_link_libraries(second_cases PRIVATE GTest::gtest)
 add_executable(second_unregistered second_main.cpp)
 target_link_libraries(second_unregistered PRIVATE second_cases GTest::gtest_main)
+
+add_executable(verbose verbose.cpp)
+target_link_libraries(verbose PRIVATE GTest::gtest_main)
+add_test(NAME verbose_pass COMMAND verbose "--gtest_filter=Numbers/VerboseValues.Pass/*")
+add_test(NAME verbose_failed_group COMMAND verbose "--gtest_filter=VerboseFailure.*")

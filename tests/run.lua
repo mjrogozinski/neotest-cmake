@@ -77,6 +77,16 @@ require('nio').run(function()
     assert(values:data().type == 'namespace' and #values:children() == 4)
     assert(require('neotest.lib').positions.nearest(tree, values:data().range[1]):data().id == values:data().id,
       'nearest source action must select all parameters')
+    -- CTest truncates passed output at 1 KiB and failed output at 300 KiB by
+    -- default. Later cases in whole-executable registrations must keep their
+    -- actual outcomes, including passing cases after a verbose failure.
+    local verbose = run(assert(adapter.discover_positions(root .. '/verbose.cpp')))
+    for name, status in pairs({ ['Numbers/VerboseValues.Pass/0'] = 'passed',
+      ['Numbers/VerboseValues.Pass/1'] = 'passed', ['VerboseFailure.Fail'] = 'failed',
+      ['VerboseFailure.PassAfterFailure'] = 'passed' }) do
+      assert(verbose[root .. '/verbose.cpp::' .. name].status == status,
+        name .. ': expected ' .. status .. ', got ' .. verbose[root .. '/verbose.cpp::' .. name].status)
+    end
     local grouped = adapter.discover_positions(root .. '/grouped.cpp')
     local group_results, spec = run(grouped)
     assert(group_results[root .. '/grouped.cpp::Group.Environment'].status == 'passed', 'fixture/environment not preserved')
@@ -130,8 +140,8 @@ require('nio').run(function()
     -- adapter's default. Discovery must hand that exact context to future runs.
     adapter({ build_dir = 'deliberately-wrong-build-directory' })
     local found = adapter.discover({ root = root, build_dir = '../../build/fixture' })
-    assert(found.binaries == 5, 'discovery did not group registrations by executable: ' .. vim.inspect(found))
-    assert(found.cases == 39, 'incorrect concrete case count: ' .. vim.inspect(found))
+    assert(found.binaries == 6, 'discovery did not group registrations by executable: ' .. vim.inspect(found))
+    assert(found.cases == 43, 'incorrect concrete case count: ' .. vim.inspect(found))
     local after_build, after_spec = run(nearest)
     assert(after_build[nearest:data().id].status == 'passed')
     assert(after_spec.cwd == vim.fs.normalize(root .. '/../../build/fixture'), 'run ignored discovered build directory')
@@ -189,6 +199,32 @@ require('nio').run(function()
     write_fixture(cases_path, cases_text)
     adapter.prepare(only)
     assert(cold_ok, cold_error)
+    -- Reconfiguration must invalidate cached ownership. Move an existing
+    -- source from an executable into another executable's object library.
+    local cmake_path = root .. '/CMakeLists.txt'
+    local cmake_text = assert(detection.read(cmake_path))
+    local shared = { [root .. '/cases_extra.cpp'] = true }
+    local function owner()
+      local targets = detection.selected_targets(vim.fs.normalize(root .. '/../../build/fixture'), '', shared)
+      assert(#targets == 1)
+      return targets[1].name
+    end
+    assert(owner() == 'cases')
+    local function configure()
+      local result = vim.system({ 'cmake', '-S', root, '-B', vim.fn.getcwd() .. '/build/fixture' }, { text = true }):wait()
+      assert(result.code == 0, result.stderr)
+    end
+    local reconfigured, config_error = xpcall(function()
+      local changed = cmake_text:gsub('cases cases.cpp cases_extra.cpp', 'cases cases.cpp', 1)
+        .. '\ntarget_sources(second_cases PRIVATE cases_extra.cpp)\n'
+      write_fixture(cmake_path, changed)
+      configure()
+      assert(owner() == 'second_unregistered', 'ownership stayed stale after CMake reconfiguration')
+    end, debug.traceback)
+    write_fixture(cmake_path, cmake_text)
+    configure()
+    assert(owner() == 'cases', 'ownership did not recover after reconfiguration')
+    assert(reconfigured, config_error)
     print('All adapter integration checks passed')
   end, debug.traceback)
   require('nio').scheduler()

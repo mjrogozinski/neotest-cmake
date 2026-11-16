@@ -330,7 +330,8 @@ function M.build_spec(args)
   if #selected > 0 then
     local report = vim.fn.tempname() .. '.xml'
     local command = { opts.ctest, '--test-dir', build, '--output-on-failure',
-      '--output-junit', report, '--parallel', tostring(opts.jobs), '-R', '^(' .. table.concat(selected, '|') .. ')$' }
+      '--output-junit', report, '--test-output-size-passed', '0', '--test-output-size-failed', '0',
+      '--parallel', tostring(opts.jobs), '-R', '^(' .. table.concat(selected, '|') .. ')$' }
     if config ~= '' then vim.list_extend(command, { '-C', config }) end
     vim.list_extend(command, opts.ctest_args)
     vim.list_extend(command, args.extra_args or {})
