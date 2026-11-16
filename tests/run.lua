@@ -210,6 +210,8 @@ require('nio').run(function()
       return targets[1].name
     end
     assert(owner() == 'cases')
+    local extra_tree = assert(adapter.discover_positions(root .. '/cases_extra.cpp'))
+    local _, _, _, _, prepared = adapter.prepare(extra_tree)
     local function configure()
       local result = vim.system({ 'cmake', '-S', root, '-B', vim.fn.getcwd() .. '/build/fixture' }, { text = true }):wait()
       assert(result.code == 0, result.stderr)
@@ -220,6 +222,9 @@ require('nio').run(function()
       write_fixture(cmake_path, changed)
       configure()
       assert(owner() == 'second_unregistered', 'ownership stayed stale after CMake reconfiguration')
+      local spec = adapter.build_spec({ tree = extra_tree, strategy = 'integrated', _cmake_prepared = prepared })
+      assert(spec.context.direct and vim.fs.basename(spec.command[1]) == 'second_unregistered',
+        'prepared context reused obsolete source ownership')
     end, debug.traceback)
     write_fixture(cmake_path, cmake_text)
     configure()

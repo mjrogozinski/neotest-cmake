@@ -108,7 +108,7 @@ end
 -- Resolve ownership once for build preparation, enumeration and invalidation.
 function M.select(build, config, files)
   local model = M.targets(build, config)
-  local selected = { model = model, targets = {}, files = files, affected = vim.deepcopy(files or {}),
+  local selected = { model = model, targets = {}, artifacts = {}, files = files, affected = vim.deepcopy(files or {}),
     executables = files and #model > 0 and {} or nil }
   for _, target in ipairs(model) do
     local owns = not files
@@ -117,6 +117,7 @@ function M.select(build, config, files)
       selected.targets[#selected.targets + 1] = target
       for path in pairs(target.files) do selected.affected[path] = true end
       for _, exe in ipairs(target.executables) do
+        selected.artifacts[#selected.artifacts + 1] = exe
         if selected.executables then selected.executables[vim.uv.fs_realpath(exe) or exe] = true end
       end
     end

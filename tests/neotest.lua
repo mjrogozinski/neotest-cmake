@@ -38,14 +38,21 @@ require('nio').run(function()
       'Values.Positive/0', 'Values.Mixed/0',
       'Typed/0.Size', 'Typed/1.Size', 'Instances/TypeParameters/0.Size', 'Instances/TypeParameters/1.Size',
     }
-    local function invoke(label, action)
-      local previous = run_count
-      action()
+    local function invoke(label, action, expected_builds)
+      local previous, system, builds = run_count, vim.system, 0
+      vim.system = function(command, ...)
+        if vim.tbl_contains(command, '--build') then builds = builds + 1 end
+        return system(command, ...)
+      end
+      local ok, reason = pcall(action)
+      if not ok then vim.system = system; error(reason) end
       for _ = 1, 3000 do
         if run_count > previous then break end
         nio.sleep(20)
       end
+      vim.system = system
       assert(run_count > previous, label .. ' did not finish')
+      assert(builds == (expected_builds or 1), label .. ': unexpected build count ' .. builds)
     end
     invoke('file run', function() neotest.cmake.run(path) end)
     local id = 'neotest-cmake:' .. root
@@ -129,12 +136,42 @@ require('nio').run(function()
       end
     end
     assert(test_count == 1)
+    invoke('rerun last', function() neotest.run.run_last() end)
     do
       -- A passing parameter rerun must not hide a failed sibling on this line.
       invoke('passing mixed instance', function()
         neotest.cmake.run({ path .. '::Numbers/Values.Mixed/0', adapter = id })
       end)
       source_mark('Values.Mixed', 'failed')
+    end
+    for _, boundary in ipairs({ adapter, require('neotest-cmake.project') }) do
+      local original = require('neotest-cmake.discovery').read(path)
+      local prepare, system, edited, launches = boundary.prepare, vim.system, false, 0
+      boundary.prepare = function(selected)
+        local returned = { prepare(selected) }
+        if returned[1] and not edited then
+          edited = true
+          write_fixture(path, original .. '\n#error changed_after_preparation\n')
+        end
+        return unpack(returned, 1, boundary == adapter and 5 or 2)
+      end
+      vim.system = function(command, ...)
+        if vim.tbl_contains(command, '--gtest_list_tests')
+          or (vim.fs.basename(command[1]) == 'ctest' and not vim.tbl_contains(command, '--show-only=json-v1')) then
+          launches = launches + 1
+        end
+        return system(command, ...)
+      end
+      local ok, reason = xpcall(function()
+        invoke('edit after preparation', function() neotest.cmake.run(path) end, 2)
+        assert(launches == 0, 'source changed after preparation but the stale binary ran')
+        nio.sleep(50)
+        assert(not client:get_results(id)[path .. '::Basic.Pass'], 'failed handoff retained stale results')
+      end, debug.traceback)
+      boundary.prepare, vim.system = prepare, system
+      write_fixture(path, original)
+      invoke('recover changed preparation', function() neotest.cmake.run(path) end)
+      assert(ok, reason)
     end
     local group_name = 'Values.Positive'
     local group = tree:get_key(path .. '::' .. group_name)
