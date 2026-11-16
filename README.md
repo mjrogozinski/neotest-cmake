@@ -365,7 +365,7 @@ With the Lua dependencies, `cpp` parser, and GoogleTest available:
 make test
 ```
 
-For measured results and known limitations on upstream Abseil and LevelDB, see [Real-world GoogleTest trials](docs/real-project-trials.md).
+For measured results and known limitations on upstream Abseil and LevelDB, see [Real-world GoogleTest trials](docs/real-project-trials.md). For module responsibilities, cache lifetimes and the build handoff, see the [implementation guide](docs/architecture.md).
 
 The suite uses compiled GoogleTest fixtures and real CMake, CTest, Neotest runners, summary rendering, source signs, and quickfix lists. It covers parameter discovery/selection, independent results, source ownership through linked libraries, stale-binary prevention, failure recovery, and debugger launch specifications. Debugger launch tests do not require a live debugger session.
 

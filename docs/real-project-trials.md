@@ -117,3 +117,15 @@ nvim table/table_test.cc
 ```
 
 Configure Neotest using the README's standalone setup, with `build_dir = "build"` and the CMake consumer. Save the source, run `require("neotest").cmake.run(vim.fn.expand("%:p"))`, and open `require("neotest").summary.toggle()`. Select a concrete parameter row in the summary to exercise individual selection. The plugin installs no project-specific mappings and requires no changes to either upstream source tree.
+
+## Refactor verification after v0.0.1
+
+The tested pre-refactor implementation is tagged `v0.0.1` (`f9e7cd4`). Following the behavior-preserving refactor:
+
+- The plugin regression suite passes, including one build per normal consumer action and repeated run, source edits on both sides of the preparation handoff, changed ownership after CMake reconfiguration, verbose CTest output, neutral marks on failure and aggregate parameter marks.
+- Abseil source discovery still returns 255 files, 7,883 test rows, 3,961 parameter rows and 8,703 summary lines. A repeated scan took 10.25 seconds with a largest sampled event-loop gap of 211 ms; this remains a single local measurement, not a general performance guarantee.
+- The same four Abseil source selections retain their outcomes: 34 passed; 66 passed including 61 value parameters; 88 passed including 54 typed instances; and 15 passed/3 conditionally uncompiled definitions in the hash-map source.
+- The deliberate Abseil build failure still produces zero stale launches, clears 88 rows and sibling-file results, preserves unrelated results and recovers after restoration.
+- LevelDB's POSIX source retains 7 passed; its table source retains 11 passed/2 skipped and the same concrete compression parameter names. File and individual-parameter selections still respect the whole-executable registration (213 native cases, about 100 seconds per run).
+
+The public setup API, options, CTest execution policies, debugger support and mixed-runner compatibility path are retained. The header-only interface ownership limitation is unchanged.
