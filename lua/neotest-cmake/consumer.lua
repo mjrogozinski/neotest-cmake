@@ -6,13 +6,29 @@ local results = require('neotest-cmake.results')
 -- Plain neotest/summary runs also build through the adapter's build_spec.
 return function(client)
   local M = {}
+  local starting = {}
+  client.listeners.starting = function()
+    local paths = { vim.uv.cwd() }
+    for _, buf in ipairs(vim.api.nvim_list_bufs()) do
+      local path = vim.api.nvim_buf_get_name(buf)
+      if path ~= '' then paths[#paths + 1] = path end
+    end
+    for _, path in ipairs(paths) do
+      local root = require('neotest-cmake').root(path)
+      if root and not starting[root] then starting[root] = activity.start(root) end
+    end
+  end
+  client.listeners.started = function()
+    for _, finish in pairs(starting) do finish() end
+    starting = {}
+  end
   -- Guard the public run entry points before Neotest tries to resolve an
   -- incomplete tree (and emits its generic "No tests found" notification).
   local run = require('neotest.consumers.run')(client)
   if not run._cmake_discovery_guard then
     for _, name in ipairs({ 'run', 'run_last' }) do
       local original = run[name]
-      run[name] = function(args, ...)
+      run[name] = nio.create(function(args)
         local selected = args
         if name == 'run_last' then
           local position, previous = run.get_last_run()
@@ -21,8 +37,12 @@ return function(client)
           end
         end
         if activity.blocked(selected) then return end
-        return original(args, ...)
-      end
+        -- Startup itself can yield before a tree exists. Check again after
+        -- initialization so an overlapping scan never reaches tree selection.
+        client:get_adapters()
+        if activity.blocked(selected) then return end
+        return original(args)
+      end, 1)
     end
     run._cmake_discovery_guard = true
   end
