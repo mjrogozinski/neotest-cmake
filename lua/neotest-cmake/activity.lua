@@ -1,5 +1,13 @@
 local M = {}
-local active = {}
+local active, waiting = {}, {}
+
+vim.api.nvim_create_autocmd('User', {
+  group = vim.api.nvim_create_augroup('neotest-cmake-discovery', { clear = true }),
+  pattern = 'NeotestCmakeDiscoveryFinished',
+  callback = function(event)
+    vim.notify('CMake test discovery finished for ' .. event.data.root .. '. You can run tests now.', vim.log.levels.INFO)
+  end,
+})
 
 local function canonical(path)
   path = vim.fn.fnamemodify(path, ':p')
@@ -16,7 +24,15 @@ function M.start(root)
     if finished then return end
     finished = true
     active[root] = active[root] - 1
-    if active[root] == 0 then active[root] = nil end
+    if active[root] == 0 then
+      active[root] = nil
+      if waiting[root] then
+        waiting[root] = nil
+        vim.api.nvim_exec_autocmds('User', {
+          pattern = 'NeotestCmakeDiscoveryFinished', modeline = false, data = { root = root },
+        })
+      end
+    end
   end
 end
 
@@ -40,6 +56,7 @@ function M.blocked(args)
   for project in pairs(active) do
     if root == project or (not root and (path == project or vim.startswith(path, project .. '/')
       or vim.startswith(path, project .. '::'))) then
+      waiting[project] = true
       vim.notify('CMake test discovery is still in progress. Please wait, then run tests again.', vim.log.levels.INFO)
       return true
     end

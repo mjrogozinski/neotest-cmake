@@ -80,6 +80,13 @@ require('nio').run(function()
       neotest.run.run_last()
       nio.sleep(100)
       source.definitions, vim.notify, vim.system = definitions, notify, system
+      vim.api.nvim_create_autocmd('User', {
+        pattern = 'NeotestCmakeDiscoveryFinished', once = true,
+        callback = function(event)
+          assert(event.data.root == root)
+          finished.set()
+        end,
+      })
       release.set()
       assert(launches == 0 and runs == before, 'discovery guard started a build or test')
       assert(#messages == 5, 'expected one informative notification per blocked action: ' .. vim.inspect(messages))
@@ -89,15 +96,7 @@ require('nio').run(function()
       end
       -- Wait for the entire refresh, including all sibling files, to complete.
       local activity = require('neotest-cmake.activity')
-      for _ = 1, 1000 do
-        local busy
-        vim.notify = function() busy = true end
-        activity.blocked({ root })
-        vim.notify = notify
-        if not busy then finished.set(); break end
-        nio.sleep(20)
-      end
-      assert(finished.is_set(), 'discovery did not finish after releasing parser')
+      finished.wait()
       activity.with(root, function()
         assert(not activity.blocked({ '/tmp/unrelated-project/tests.cpp' }), 'blocked unrelated project')
         assert(not activity.blocked({ path, adapter = 'other-adapter:' .. root }), 'blocked another adapter')

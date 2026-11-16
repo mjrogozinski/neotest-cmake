@@ -24,6 +24,14 @@ nio.run(function()
     local find, notify, system = files.find, vim.notify, vim.system
     local entered, release, done = nio.control.event(), nio.control.event(), nio.control.event()
     local first, startup_error = true, nil
+    local discovery_finished = nio.control.event()
+    vim.api.nvim_create_autocmd('User', {
+      pattern = 'NeotestCmakeDiscoveryFinished', once = true,
+      callback = function(event)
+        assert(event.data.root == root)
+        discovery_finished.set()
+      end,
+    })
     files.find = function(path, ...)
       if first then
         first = false
@@ -48,17 +56,22 @@ nio.run(function()
     neotest.run.run { alias .. '/cases.cpp::Basic.Pass', adapter = 'neotest-cmake:' .. alias }
     neotest.cmake.run { root, adapter = 'neotest-cmake:' .. root }
     nio.sleep(100)
-    vim.notify, vim.system, files.find = notify, system, find
+    vim.system, files.find = system, find
     release.set()
     done.wait()
+    discovery_finished.wait()
+    vim.notify = notify
     assert(not startup_error, startup_error)
     assert(launches == 0, 'startup requests launched a build or test')
     assert(vim.deep_equal(qf, vim.fn.getqflist({ changedtick = 0, title = 0 })), 'startup requests changed quickfix')
-    assert(#messages == 7, 'wrong notification count: ' .. vim.inspect(messages))
-    for _, message in ipairs(messages) do
+    assert(#messages == 8, 'wrong notification count: ' .. vim.inspect(messages))
+    for i = 1, 7 do
+      local message = messages[i]
       assert(message[1]:find('discovery is still in progress', 1, true)
         and message[2] == vim.log.levels.INFO, vim.inspect(message))
     end
+    assert(messages[8][1]:find('You can run tests now.', 1, true)
+      and messages[8][2] == vim.log.levels.INFO, 'missing completion notification')
     assert(not activity.blocked('cases.cpp'), 'startup scope was not released')
     -- The same relative-path action must work normally once startup finishes.
     local completed = nio.control.event()

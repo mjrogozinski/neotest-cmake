@@ -202,7 +202,7 @@ require("neotest").output.open({ enter = true }) -- output for the selected test
 
 The plugin does not install keymaps. The `cmake.run()` consumer builds first, refreshes source positions, then invokes Neotest. Standard `neotest.run.run()` and summary actions also build through the adapter; the consumer additionally handles discovery refresh and stale-result invalidation.
 
-While CMake test discovery is running, run and rerun requests for that project show an informational notification and return without building or executing tests. Retry the action after discovery finishes.
+While CMake test discovery is running, run and rerun requests for that project show an informational notification and return without building or executing tests. If a run was blocked, discovery publishes a `User NeotestCmakeDiscoveryFinished` event with `data.root` when the project finishes parsing. The completion notification listens for that event and tells you when you can retry.
 
 Build errors open **quickfix** with clickable file and line locations. Tests in the affected binary return to neutral not-run marks, including tests in sibling source files; unrelated binaries keep their results. Discovery reuses known parameter names while sources are unbuilt, without launching the old binary. A successful rebuild clears the adapter's current quickfix list. With Trouble installed, use `:Trouble qflist open` to view the same list.
 
