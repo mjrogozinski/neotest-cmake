@@ -105,16 +105,25 @@ function M.artifacts(build, config)
   return out
 end
 
--- Include executables linking a library that owns a selected source file.
-function M.selected_targets(build, config, files)
-  local selected = {}
-  for _, target in ipairs(M.targets(build, config)) do
-    if #target.executables > 0 then
-      for path in pairs(files) do
-        if target.files[path] then selected[#selected + 1] = target; break end
+-- Resolve ownership once for build preparation, enumeration and invalidation.
+function M.select(build, config, files)
+  local model = M.targets(build, config)
+  local selected = { model = model, targets = {}, files = files, affected = vim.deepcopy(files or {}),
+    executables = files and #model > 0 and {} or nil }
+  for _, target in ipairs(model) do
+    local owns = not files
+    for path in pairs(files or {}) do if target.files[path] then owns = true; break end end
+    if owns and #target.executables > 0 then
+      selected.targets[#selected.targets + 1] = target
+      for path in pairs(target.files) do selected.affected[path] = true end
+      for _, exe in ipairs(target.executables) do
+        if selected.executables then selected.executables[vim.uv.fs_realpath(exe) or exe] = true end
       end
     end
   end
   return selected
+end
+function M.selected_targets(build, config, files)
+  return M.select(build, config, files).targets
 end
 return M

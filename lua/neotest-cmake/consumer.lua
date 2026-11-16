@@ -1,4 +1,5 @@
 local nio = require('nio')
+local results = require('neotest-cmake.results')
 
 -- Refresh the source tree after building, before Neotest selects concrete cases.
 -- Plain neotest/summary runs also build through the adapter's build_spec.
@@ -21,14 +22,14 @@ return function(client)
       end
     end
   end
-  client.listeners.results = function(adapter_id, results, partial)
+  client.listeners.results = function(adapter_id, updates, partial)
     if not vim.startswith(adapter_id, 'neotest-cmake:') then return end
-    for _, result in pairs(results) do
+    for _, result in pairs(updates) do
       if result.build_failure then invalidate(adapter_id, result.build_failure.files); return end
     end
     if partial then return end
     local groups = {}
-    for id in pairs(results) do
+    for id in pairs(updates) do
       local node = client:get_position(id, { adapter = adapter_id })
       if node and node:data().key then
         for parent in node:iter_parents() do
@@ -39,14 +40,11 @@ return function(client)
     -- Neotest only aggregates parents inside the selected subtree. Recompute
     -- the definition after individual-instance runs using all known siblings.
     local known, updates = client:get_results(adapter_id), {}
-    local rank = { skipped = 1, passed = 2, failed = 3 }
     for id, group in pairs(groups) do
       local status
       for _, child in ipairs(group:children()) do
         local result = known[child:data().id]
-        if result and rank[result.status] and (not status or rank[result.status] > rank[status]) then
-          status = result.status
-        end
+        if result then status = results.worst(status, result.status) end
       end
       if status and (not known[id] or known[id].status ~= status) then
         updates[id] = vim.tbl_extend('force', known[id] or {}, { status = status })
