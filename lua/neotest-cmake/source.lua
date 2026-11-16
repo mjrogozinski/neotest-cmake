@@ -1,5 +1,17 @@
 local M = {}
-local kinds = { TEST = true, TEST_F = true, TEST_P = true, TYPED_TEST = true, TYPED_TEST_P = true }
+local definitions_query
+local function query()
+  if not definitions_query then
+    definitions_query = vim.treesitter.query.parse('cpp', [[
+      ((function_definition
+        declarator: (function_declarator
+          declarator: (_) @kind
+          parameters: (parameter_list) @parameters)) @definition
+      (#any-of? @kind "TEST" "TEST_F" "TEST_P" "TYPED_TEST" "TYPED_TEST_P"))
+    ]])
+  end
+  return definitions_query
+end
 
 -- Tree-sitter owns source detection; runtime enumeration owns parameter names.
 function M.definitions(path)
@@ -11,30 +23,24 @@ function M.definitions(path)
   local file = { id = path, name = vim.fs.basename(path), path = path,
     type = 'file', range = { root:range() } }
   local definitions = {}
-  local function visit(node)
-    if node:type() == 'function_definition' then
-      local decl = node:field('declarator')[1]
-      local name = decl and decl:field('declarator')[1]
-      local params = decl and decl:field('parameters')[1]
-      local kind = name and vim.treesitter.get_node_text(name, text)
-      if kinds[kind] and params then
-        local names = {}
-        for child in params:iter_children() do
-          if child:type() == 'parameter_declaration' then
-            names[#names + 1] = vim.trim(vim.treesitter.get_node_text(child, text))
-          end
-        end
-        if #names == 2 then
-          local suite, case = unpack(names)
-          definitions[#definitions + 1] = { id = path .. '::' .. suite .. '.' .. case,
-            name = suite .. '.' .. case, type = 'test', path = path,
-            range = { node:range() }, suite = suite, case = case, kind = kind }
-        end
+  local q = query()
+  for _, match in q:iter_matches(root, text, 0, -1) do
+    local captures = {}
+    for id, nodes in pairs(match) do captures[q.captures[id]] = nodes[1] end
+    local names = {}
+    for child in captures.parameters:iter_children() do
+      if child:type() == 'parameter_declaration' then
+        names[#names + 1] = vim.trim(vim.treesitter.get_node_text(child, text))
       end
     end
-    for child in node:iter_children() do visit(child) end
+    if #names == 2 then
+      local suite, case = unpack(names)
+      definitions[#definitions + 1] = { id = path .. '::' .. suite .. '.' .. case,
+        name = suite .. '.' .. case, type = 'test', path = path,
+        range = { captures.definition:range() }, suite = suite, case = case,
+        kind = vim.treesitter.get_node_text(captures.kind, text) }
+    end
   end
-  visit(root)
   return file, definitions
 end
 
