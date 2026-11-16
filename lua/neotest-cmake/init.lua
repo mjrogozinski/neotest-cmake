@@ -2,6 +2,7 @@ local discovery = require('neotest-cmake.discovery')
 local source = require('neotest-cmake.source')
 local project = require('neotest-cmake.project')
 local diagnostics = require('neotest-cmake.diagnostics')
+local activity = require('neotest-cmake.activity')
 local M = { name = 'neotest-cmake' }
 local runner = vim.fs.dirname(debug.getinfo(1, 'S').source:sub(2)) .. '/runner.lua'
 M.root, M.discover = project.root, project.discover
@@ -11,13 +12,17 @@ function M.filter_dir(name, relpath, root)
 end
 function M.is_test_file(path)
   if not vim.tbl_contains({ 'c', 'cc', 'cpp', 'cxx', 'h', 'hpp', 'hxx' }, vim.fn.fnamemodify(path, ':e')) then return false end
-  local _, definitions = source.definitions(path)
-  return #definitions > 0
+  return activity.with(project.root(path), function()
+    local _, definitions = source.definitions(path)
+    return #definitions > 0
+  end)
 end
 function M.discover_positions(path)
-  local file, definitions = source.definitions(path)
-  if #definitions == 0 then return nil end
-  return source.tree(file, definitions, project.keys(path))
+  return activity.with(project.root(path), function()
+    local file, definitions = source.definitions(path)
+    if #definitions == 0 then return nil end
+    return source.tree(file, definitions, project.keys(path))
+  end)
 end
 function M.prepare(tree)
   local selection, failure = project.prepare(tree)

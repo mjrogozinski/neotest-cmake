@@ -159,7 +159,7 @@ function M.keys(path)
   return keys
 end
 
-function M.discover(given)
+local function discover(given)
   require('nio').scheduler()
   local root = vim.uv.fs_realpath(given.root) or vim.fs.normalize(given.root)
   local ctx = context(root, given.build_dir, given.config or opts.config)
@@ -176,6 +176,11 @@ function M.discover(given)
   ctx.state.unbuilt = {}
   builds[root] = { build_dir = ctx.build_dir, config = ctx.config }
   return { root = root, build_dir = ctx.build_dir, config = ctx.config, binaries = vim.tbl_count(binaries), cases = count }
+end
+
+function M.discover(given)
+  local root = vim.uv.fs_realpath(given.root) or vim.fs.normalize(given.root)
+  return require('neotest-cmake.activity').with(root, function() return discover(given) end)
 end
 
 local function file_stamp(path)

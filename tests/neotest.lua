@@ -54,6 +54,57 @@ require('nio').run(function()
       assert(run_count > previous, label .. ' did not finish')
       assert(builds == (expected_builds or 1), label .. ': unexpected build count ' .. builds)
     end
+    do
+      -- Hold a real source refresh mid-parse while all public run paths are used.
+      local source = require('neotest-cmake.source')
+      local definitions, notify, system = source.definitions, vim.notify, vim.system
+      local entered, release, finished = nio.control.event(), nio.control.event(), nio.control.event()
+      local messages, launches, paused = {}, 0, false
+      source.definitions = function(file)
+        if not paused then
+          paused = true
+          entered.set()
+          release.wait()
+        end
+        return definitions(file)
+      end
+      nio.run(function() neotest.cmake.refresh(root) end)
+      entered.wait()
+      local before = runs
+      vim.notify = function(message, level) messages[#messages + 1] = { message, level } end
+      vim.system = function(...) launches = launches + 1; return system(...) end
+      neotest.cmake.run(path)
+      neotest.cmake.run { path, strategy = 'dap' }
+      neotest.cmake.run { root, adapter = 'neotest-cmake:' .. root }
+      neotest.run.run(path)
+      neotest.run.run_last()
+      nio.sleep(100)
+      source.definitions, vim.notify, vim.system = definitions, notify, system
+      release.set()
+      assert(launches == 0 and runs == before, 'discovery guard started a build or test')
+      assert(#messages == 5, 'expected one informative notification per blocked action: ' .. vim.inspect(messages))
+      for _, message in ipairs(messages) do
+        assert(message[1]:find('discovery is still in progress', 1, true)
+          and message[2] == vim.log.levels.INFO, vim.inspect(message))
+      end
+      -- Wait for the entire refresh, including all sibling files, to complete.
+      local activity = require('neotest-cmake.activity')
+      for _ = 1, 1000 do
+        local busy
+        vim.notify = function() busy = true end
+        activity.blocked({ root })
+        vim.notify = notify
+        if not busy then finished.set(); break end
+        nio.sleep(20)
+      end
+      assert(finished.is_set(), 'discovery did not finish after releasing parser')
+      activity.with(root, function()
+        assert(not activity.blocked({ '/tmp/unrelated-project/tests.cpp' }), 'blocked unrelated project')
+        assert(not activity.blocked({ path, adapter = 'other-adapter:' .. root }), 'blocked another adapter')
+      end)
+      local ok = pcall(function() activity.with(root, function() error('parse failure') end) end)
+      assert(not ok and not activity.blocked({ root }), 'failed discovery left run guard active')
+    end
     invoke('file run', function() neotest.cmake.run(path) end)
     local id = 'neotest-cmake:' .. root
     local tree = assert(client:get_position(path, { adapter = id }))

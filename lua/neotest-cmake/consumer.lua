@@ -1,10 +1,31 @@
 local nio = require('nio')
+local activity = require('neotest-cmake.activity')
 local results = require('neotest-cmake.results')
 
 -- Refresh the source tree after building, before Neotest selects concrete cases.
 -- Plain neotest/summary runs also build through the adapter's build_spec.
 return function(client)
   local M = {}
+  -- Guard the public run entry points before Neotest tries to resolve an
+  -- incomplete tree (and emits its generic "No tests found" notification).
+  local run = require('neotest.consumers.run')(client)
+  if not run._cmake_discovery_guard then
+    for _, name in ipairs({ 'run', 'run_last' }) do
+      local original = run[name]
+      run[name] = function(args, ...)
+        local selected = args
+        if name == 'run_last' then
+          local position, previous = run.get_last_run()
+          if position then
+            selected = vim.tbl_extend('force', previous or {}, args or {}, { position })
+          end
+        end
+        if activity.blocked(selected) then return end
+        return original(args, ...)
+      end
+    end
+    run._cmake_discovery_guard = true
+  end
   local function invalidate(adapter_id, files)
     local root = client:get_position(nil, { adapter = adapter_id })
     local known = client:get_results(adapter_id)
@@ -54,12 +75,14 @@ return function(client)
   end
   M.run = nio.create(function(args)
     args = type(args) == 'string' and { args } or args or {}
+    if activity.blocked(args) then return end
     local neotest = require('neotest')
     local stat = args[1] and vim.uv.fs_stat(args[1])
     if stat and stat.type == 'directory' then
       client:_update_positions(args[1], { adapter = args.adapter })
     end
     local tree = neotest.run.get_tree_from_args(args)
+    if activity.blocked(args) then return end
     if not tree then return neotest.run.run(args) end
     local _, adapter_id = client:get_position(tree:data().id, args)
     if vim.startswith(adapter_id or '', 'neotest-cmake:') then
@@ -72,7 +95,10 @@ return function(client)
   end, 1)
   M.refresh = nio.create(function(path)
     local root = require('neotest-cmake').root(path)
-    client:_update_positions(path, { adapter = root and 'neotest-cmake:' .. root })
+    if not root then return end
+    activity.with(root, function()
+      client:_update_positions(path, { adapter = 'neotest-cmake:' .. root })
+    end)
   end, 1)
   return M
 end
