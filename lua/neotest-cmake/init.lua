@@ -24,8 +24,8 @@ function M.discover_positions(path)
     return source.tree(file, definitions, project.keys(path))
   end)
 end
-function M.prepare(tree)
-  local selection, failure = project.prepare(tree)
+function M.prepare(tree, parent)
+  local selection, failure = project.prepare(tree, parent)
   local ctx = selection.context
   return not failure and selection.files or nil, ctx.build_dir, ctx.config, failure,
     not failure and project.prepared(selection) or nil
@@ -36,7 +36,7 @@ local function regex(s) return (s:gsub('([\\%.%[%]%^%$%*%+%?%(%){|}])', '\\%1'))
 function M.build_spec(args)
   local selection = project.reuse(args._cmake_prepared, args.tree)
   local failure
-  if not selection then selection, failure = project.prepare(args.tree) end
+  if not selection then selection, failure = project.prepare(args.tree, args._cmake_parent) end
   if failure then return diagnostics.blocked(args.tree, failure) end
   local ctx = selection.context
   local build, config, opts = ctx.build_dir, ctx.config, ctx.options
@@ -128,7 +128,12 @@ function M.build_spec(args)
   for _, pos in ipairs(tests) do
     if not matched[pos.id] then specs[1].context.tests[#specs[1].context.tests + 1] = pos end
   end
-  if #specs == 1 then return specs[1] end
+  local function task_spec(spec)
+    if args._cmake_parent then spec.strategy = { parent_id = args._cmake_parent.id, name = 'Run tests',
+      components = require('neotest-cmake.overseer').components } end
+    return spec
+  end
+  if #specs == 1 then return task_spec(specs[1]) end
   -- Older neotest runners share process keys/output paths across specs for a
   -- single tree. Use one strategy process and execute its argv lists in order.
   local manifest = vim.fn.tempname() .. '.json'
@@ -138,8 +143,8 @@ function M.build_spec(args)
     commands[#commands + 1] = { command = spec.command, cwd = spec.cwd, output = spec.context.output }
   end
   vim.fn.writefile({ vim.json.encode(commands) }, manifest)
-  return { command = { vim.v.progpath, '--headless', '-u', 'NONE', '-i', 'NONE', '-l', runner, manifest },
-    cwd = build, context = { runs = specs, manifest = manifest } }
+  return task_spec({ command = { vim.v.progpath, '--headless', '-u', 'NONE', '-i', 'NONE', '-l', runner, manifest },
+    cwd = build, context = { runs = specs, manifest = manifest } })
 end
 
 M.results = require('neotest-cmake.results').collect

@@ -55,7 +55,8 @@ require('nio').run(function()
       assert(builds == (expected_builds or 1), label .. ': unexpected build count ' .. builds)
     end
     do
-      -- Hold a real source refresh mid-parse while all public run paths are used.
+      -- Plain Neotest entry points still guard against incomplete discovery.
+      -- The CMake consumer queues runs instead (covered by tests/overseer.lua).
       local source = require('neotest-cmake.source')
       local definitions, notify, system = source.definitions, vim.notify, vim.system
       local entered, release, finished = nio.control.event(), nio.control.event(), nio.control.event()
@@ -73,9 +74,6 @@ require('nio').run(function()
       local before = runs
       vim.notify = function(message, level) messages[#messages + 1] = { message, level } end
       vim.system = function(...) launches = launches + 1; return system(...) end
-      neotest.cmake.run(path)
-      neotest.cmake.run { path, strategy = 'dap' }
-      neotest.cmake.run { root, adapter = 'neotest-cmake:' .. root }
       neotest.run.run(path)
       neotest.run.run_last()
       nio.sleep(100)
@@ -89,7 +87,7 @@ require('nio').run(function()
       })
       release.set()
       assert(launches == 0 and runs == before, 'discovery guard started a build or test')
-      assert(#messages == 5, 'expected one informative notification per blocked action: ' .. vim.inspect(messages))
+      assert(#messages == 2, 'expected one informative notification per blocked action: ' .. vim.inspect(messages))
       for _, message in ipairs(messages) do
         assert(message[1]:find('discovery is still in progress', 1, true)
           and message[2] == vim.log.levels.INFO, vim.inspect(message))
@@ -339,7 +337,13 @@ require('nio').run(function()
       end
       if summary and summary:find(expected[#expected], 1, true) then break end
     end
-    for _, name in ipairs(expected) do assert(summary and summary:find(name, 1, true), 'missing summary row: ' .. name) end
+    for _, name in ipairs(expected) do
+      local count = 0
+      for _, line in ipairs(vim.split(summary or '', '\n', { plain = true })) do
+        if line:sub(-#name - 1) == ' ' .. name then count = count + 1 end
+      end
+      assert(count == 1, 'expected exactly one summary row for ' .. name .. ', got ' .. count)
+    end
     print(summary)
     print('Neotest UI checks passed: concrete parameter rows, file, nearest and exact-instance runs')
   end, debug.traceback)

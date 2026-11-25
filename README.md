@@ -202,7 +202,7 @@ require("neotest").output.open({ enter = true }) -- output for the selected test
 
 The plugin does not install keymaps. The `cmake.run()` consumer builds first, refreshes source positions, then invokes Neotest. Standard `neotest.run.run()` and summary actions also build through the adapter; the consumer additionally handles discovery refresh and stale-result invalidation.
 
-While CMake test discovery is running, run and rerun requests for that project show an informational notification and return without building or executing tests. If a run was blocked, discovery publishes a `User NeotestCmakeDiscoveryFinished` event with `data.root` when the project finishes parsing. The completion notification listens for that event and tells you when you can retry.
+`cmake.run()` waits asynchronously for any active discovery in the selected project, then builds and runs the updated tests automatically. Saving immediately before running needs only one invocation. Plain Neotest run/rerun entry points still return with an informational notification during discovery; those blocked requests receive a `User NeotestCmakeDiscoveryFinished` event with `data.root` when parsing completes.
 
 Build errors open **quickfix** with clickable file and line locations. Tests in the affected binary return to neutral not-run marks, including tests in sibling source files; unrelated binaries keep their results. Discovery reuses known parameter names while sources are unbuilt, without launching the old binary. A successful rebuild clears the adapter's current quickfix list. With Trouble installed, use `:Trouble qflist open` to view the same list.
 
@@ -231,6 +231,8 @@ vim.keymap.set("n", "<leader>to", function() require("neotest").output.open({ en
 vim.keymap.set("n", "<leader>tx", function() require("neotest").run.stop() end,
   { desc = "Stop test run" })
 ```
+
+When Overseer is available, `neotest.cmake.run()` shows one **Build and test** parent task with **Build tests** and **Run tests** children. Builds and tests run asynchronously, in that order; a failed build stops execution. Stop the parent task to cancel its active child, or restart it to rebuild and rerun. Each child retains its own output. Debug runs keep the DAP strategy.
 
 ### Parameterized tests
 
@@ -371,7 +373,7 @@ For measured results and known limitations on upstream Abseil and LevelDB, see [
 
 The suite uses compiled GoogleTest fixtures and real CMake, CTest, Neotest runners, summary rendering, source signs, and quickfix lists. It covers parameter discovery/selection, independent results, source ownership through linked libraries, stale-binary prevention, failure recovery, and debugger launch specifications. Debugger launch tests do not require a live debugger session.
 
-The runner looks for dependency checkouts under `~/.local/share/nvim/lazy` **only as a development default**. Set `NEOTEST_DEPS` to a directory containing `neotest`, `nvim-nio`, and `plenary.nvim` checkouts when using another layout. Set `CPP_PARSER_DIR` to a runtime directory containing `parser/cpp.so`, and `CMAKE_PREFIX_PATH` if CMake needs help locating GoogleTest. None of these test-runner paths are required for normal plugin use.
+The runner looks for dependency checkouts under `~/.local/share/nvim/lazy` **only as a development default**. Set `NEOTEST_DEPS` to a directory containing `neotest`, `nvim-nio`, and `plenary.nvim` checkouts when using another layout. Set `CPP_PARSER_DIR` to a runtime directory containing `parser/cpp.so`, and `CMAKE_PREFIX_PATH` if CMake needs help locating GoogleTest. If `overseer.nvim` is also present under `NEOTEST_DEPS`, the suite checks delayed build/test responsiveness, task grouping, silent failures, fresh results after queued single requests, duplicate-free summary rows, build failures, restarts, and cancellation. CI requires this dependency and runs these checks. None of these test-runner paths are required for normal plugin use.
 
 ## Credits and license
 

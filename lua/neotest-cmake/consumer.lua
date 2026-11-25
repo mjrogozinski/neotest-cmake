@@ -95,23 +95,43 @@ return function(client)
   end
   M.run = nio.create(function(args)
     args = type(args) == 'string' and { args } or args or {}
-    if activity.blocked(args) then return end
+    activity.wait(args)
     local neotest = require('neotest')
     local stat = args[1] and vim.uv.fs_stat(args[1])
     if stat and stat.type == 'directory' then
       client:_update_positions(args[1], { adapter = args.adapter })
     end
     local tree = neotest.run.get_tree_from_args(args)
-    if activity.blocked(args) then return end
+    activity.wait(args)
     if not tree then return neotest.run.run(args) end
     local _, adapter_id = client:get_position(tree:data().id, args)
-    if vim.startswith(adapter_id or '', 'neotest-cmake:') then
-      local files, _, _, failure, prepared = require('neotest-cmake').prepare(tree)
-      if not files then invalidate(adapter_id, failure.files); return end
-      for path in pairs(files) do client:_update_positions(path, { adapter = adapter_id }) end
-      args = vim.tbl_extend('force', args, { _cmake_prepared = prepared })
+    if not vim.startswith(adapter_id or '', 'neotest-cmake:') or args.strategy == 'dap' then
+      if args.strategy == 'dap' and vim.startswith(adapter_id or '', 'neotest-cmake:') then
+        local files, _, _, failure, prepared = require('neotest-cmake').prepare(tree)
+        if not files then invalidate(adapter_id, failure.files); return end
+        for path in pairs(files) do client:_update_positions(path, { adapter = adapter_id }) end
+        args = vim.tbl_extend('force', args, { _cmake_prepared = prepared })
+      end
+      return neotest.run.run(args)
     end
-    neotest.run.run(args)
+    local integration = require('neotest-cmake.overseer')
+    local function execute(parent)
+      local files, _, _, failure, prepared = require('neotest-cmake').prepare(tree, parent)
+      if not files then invalidate(adapter_id, failure.files); return false end
+      if parent and not parent:is_running() then return false end
+      for path in pairs(files) do client:_update_positions(path, { adapter = adapter_id }) end
+      args = vim.tbl_extend('force', args, { _cmake_prepared = prepared, _cmake_parent = parent })
+      if parent then
+        args.strategy = 'overseer'
+        tree = neotest.run.get_tree_from_args(args, true)
+        if not tree then return false end
+        if neotest.overseer then neotest.overseer.run(args) else client:run_tree(tree, args) end
+      else
+        neotest.run.run(args)
+      end
+      return true
+    end
+    if not integration.parent(tree:root():data().path, tree:data().name, execute) then execute(nil) end
   end, 1)
   M.refresh = nio.create(function(path)
     local root = require('neotest-cmake').root(path)

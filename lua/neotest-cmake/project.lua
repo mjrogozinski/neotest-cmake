@@ -204,7 +204,7 @@ local function snapshot(selection, artifacts)
   return stamp
 end
 
-function M.prepare(tree)
+function M.prepare(tree, parent)
   local ctx = M.context(tree:data().path)
   local selection = select(ctx, M.files(tree))
   local failure
@@ -225,7 +225,9 @@ function M.prepare(tree)
       local query = ctx.build_dir .. '/.cmake/api/v1/query'
       vim.fn.mkdir(query, 'p')
       vim.fn.writefile({}, query .. '/codemodel-v2')
-      local result = process(ctx, { ctx.options.cmake, '-S', ctx.root, '-B', ctx.build_dir }, ctx.root, nil, ctx.options.build_timeout)
+      local command = { ctx.options.cmake, '-S', ctx.root, '-B', ctx.build_dir }
+      local result = parent and require('neotest-cmake.overseer').process(parent, command, ctx.root, ctx.options.build_timeout)
+        or process(ctx, command, ctx.root, nil, ctx.options.build_timeout)
       if result.code ~= 0 then fail('configure', result); return end
     end
     -- Configuration (or another queued build) may have changed ownership.
@@ -241,7 +243,8 @@ function M.prepare(tree)
     command[#command + 1] = '--target'
     for _, target in ipairs(selection.targets) do command[#command + 1] = target.name end
     selection.stamp = snapshot(selection)
-    local result = process(ctx, command, ctx.root, nil, ctx.options.build_timeout)
+    local result = parent and require('neotest-cmake.overseer').process(parent, command, ctx.root, ctx.options.build_timeout)
+      or process(ctx, command, ctx.root, nil, ctx.options.build_timeout)
     if result.code ~= 0 then fail('build', result); return end
     mark(false)
     diagnostics.clear(ctx.root, ctx.build_dir)
