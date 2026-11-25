@@ -138,6 +138,28 @@ require('nio').run(function()
         name .. ': wrong virtual-text status')
     end
     do
+      local prepare = adapter.prepare
+      local checked = false
+      adapter.prepare = function(...)
+        checked = true
+        for _, pos in tree:iter() do
+          assert(client:is_running(pos.id, { adapter = id }), 'not running before build: ' .. pos.id)
+          assert(not client:get_results(id)[pos.id], 'old result visible during build: ' .. pos.id)
+        end
+        source_mark('Basic.Pass', 'running')
+        source_mark('Values.Positive', 'running')
+        source_mark('Values.Mixed', 'running')
+        source_mark('Typed.Size', 'running')
+        return prepare(...)
+      end
+      local ok, reason = pcall(function()
+        invoke('loading during preparation', function() neotest.cmake.run(path) end)
+      end)
+      adapter.prepare = prepare
+      assert(ok, reason)
+      assert(checked, 'preparation was not checked')
+    end
+    do
       source_mark('Values.Mixed', 'failed')
       source_mark('Values.Positive', 'passed')
       source_mark('Typed.Size', 'passed')
@@ -301,7 +323,7 @@ require('nio').run(function()
         local previous, previous_runs = run_count, runs
         neotest.cmake.run(path)
         neutral()
-        assert(run_count == previous and runs == previous_runs, 'consumer emitted a test run after a failed build')
+        assert(run_count == previous and runs == previous_runs + 1, 'failed build did not emit only the preparation event')
         assert(vim.fn.getqflist({ winid = 0 }).winid > 0, 'consumer did not open quickfix')
         assert(vim.api.nvim_buf_get_name(0) == path, 'quickfix stole focus from the source buffer')
         -- Discovery and retries after failure preserve parameter rows without

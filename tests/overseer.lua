@@ -132,6 +132,14 @@ nio.run(function()
             local stage = child.name
             progress[stage] = progress[stage] or { ticks, ticks }
             progress[stage][2] = ticks
+            if stage == 'Build tests' then
+              local id = 'neotest-cmake:' .. root
+              local selected = assert(client:get_position(path, { adapter = id }))
+              for _, pos in selected:iter() do
+                assert(client:is_running(pos.id, { adapter = id }), 'build did not mark running: ' .. pos.id)
+                assert(not client:get_results(id)[pos.id], 'build retained old result: ' .. pos.id)
+              end
+            end
             if stage == 'Run tests' then
               local build_finished = false
               for _, sibling in ipairs(children(parent)) do
@@ -233,7 +241,7 @@ nio.run(function()
       require('neotest-cmake.source').definitions = definitions
       parent = queued
       complete(parent, failing and 'FAILURE' or 'SUCCESS', 2)
-      assert(started_runs == before_runs + 1, 'one request did not produce exactly one test run: ' .. (started_runs - before_runs))
+      assert(started_runs == before_runs + 2, 'expected preparation and execution events: ' .. (started_runs - before_runs))
       assert(not activity.blocked { path }, 'discovery left the run guard active')
     end
     source(false)
@@ -244,7 +252,7 @@ nio.run(function()
     vim.fn.writefile({ 'invalid C++' }, path, 'a')
     parent = invoke()
     complete(parent, 'FAILURE', 1)
-    assert(started_runs == before_failure, 'failed build launched stale tests')
+    assert(started_runs == before_failure + 1, 'failed build emitted an execution event')
     source(false)
     parent = invoke()
     wait_for(function()
