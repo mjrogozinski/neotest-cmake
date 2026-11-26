@@ -46,8 +46,19 @@ function M.build_spec(args)
     if pos.type == 'test' then tests[#tests + 1] = pos end
   end
   assert(#tests > 0, 'neotest-cmake: no GoogleTest source positions selected')
+  local registrations = project.registrations(selection)
+  local direct_selection = args.strategy == 'dap'
+  if args.tree:data().type == 'test' then
+    for _, reg in ipairs(registrations) do
+      if reg.env.GTEST_TOTAL_SHARDS or vim.env.GTEST_TOTAL_SHARDS then
+        for _, key in ipairs(reg.keys) do
+          if source.matches(tests[1], key.key) then direct_selection = true end
+        end
+      end
+    end
+  end
   local selected, mappings, specs, matched, debugging = {}, {}, {}, {}, {}
-  for _, reg in ipairs(project.registrations(selection)) do
+  for _, reg in ipairs(registrations) do
     local ids = {}
     for _, pos in ipairs(tests) do
       for _, key in ipairs(reg.keys) do
@@ -59,7 +70,7 @@ function M.build_spec(args)
     end
     if next(ids) then
       for id in pairs(ids) do matched[id] = true end
-      if args.strategy == 'dap' then
+      if direct_selection then
         debugging[#debugging + 1] = { registration = reg, mappings = ids }
       elseif reg.kind == 'direct' then
         local keys, disabled = {}, {}
@@ -76,21 +87,26 @@ function M.build_spec(args)
       end
     end
   end
-  if args.strategy == 'dap' then
+  if direct_selection then
     assert(#debugging > 0, 'neotest-cmake: no built GoogleTest cases selected for debugging')
     local command, cwd, env, signature, mappings, disabled, keys = nil, nil, nil, nil, {}, {}, {}
     for _, entry in ipairs(debugging) do
       local reg = entry.registration
       local props = reg.properties
       assert(not props.FIXTURES_REQUIRED and not props.FIXTURES_SETUP and not props.FIXTURES_CLEANUP,
-        'neotest-cmake: debug runs do not support CTest fixtures; use a normal test run')
+        'neotest-cmake: direct runs do not support CTest fixtures; use a normal file test run')
       local argv = {}
       for _, arg in ipairs(reg.command) do
         if not vim.startswith(arg, '--gtest_filter=') and not vim.startswith(arg, '--gtest_color=') then
           argv[#argv + 1] = arg
         end
       end
-      local launch_env, launch_cwd = reg.env, reg.cwd
+      local launch_env, launch_cwd = vim.deepcopy(reg.env), reg.cwd
+      -- A filtered invocation must execute the selected case regardless of the
+      -- shard assigned by CTest or inherited from the editor environment.
+      launch_env.GTEST_TOTAL_SHARDS = '1'
+      launch_env.GTEST_SHARD_INDEX = '0'
+      launch_env.GTEST_SHARD_STATUS_FILE = nil
       local current = vim.json.encode({ argv, launch_cwd, launch_env })
       assert(not signature or signature == current,
         'neotest-cmake: debug selection must use one executable with one launch environment')
@@ -108,7 +124,12 @@ function M.build_spec(args)
     vim.list_extend(command, args.extra_args or {})
     local launch = vim.tbl_extend('force', opts.dap, { request = 'launch', name = 'GoogleTest',
       program = command[1], args = vim.list_slice(command, 2), cwd = cwd, env = env })
-    return { command = command, cwd = cwd, env = env, strategy = launch,
+    local strategy = args.strategy == 'dap' and launch or nil
+    if args.strategy ~= 'dap' and args._cmake_parent then
+      strategy = { parent_id = args._cmake_parent.id, name = 'Run tests',
+        components = require('neotest-cmake.overseer').components }
+    end
+    return { command = command, cwd = cwd, env = env, strategy = strategy,
       context = { direct = true, mappings = mappings, disabled = disabled, tests = {} } }
   end
   if #selected > 0 then

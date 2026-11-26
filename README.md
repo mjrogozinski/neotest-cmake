@@ -337,6 +337,8 @@ vim.cmd("wall")
 require("neotest").cmake.run({ strategy = "dap" })
 ```
 
+Single-test selections with `GTEST_TOTAL_SHARDS` in the registration or editor environment launch the binary directly with an exact GoogleTest filter. Direct selections and debugger launches use `GTEST_TOTAL_SHARDS=1` and `GTEST_SHARD_INDEX=0`, so the selected case cannot be excluded by a shard. CTest fixtures are rejected for these direct runs. File and directory runs retain CTest sharding.
+
 Debugging builds first, then launches GoogleTest directly with the selected filter and the registration's working directory/environment. A debug selection must use **one executable with one launch environment**. CTest fixture registrations are rejected: direct debugger launches do not reproduce CTest's fixture lifecycle, timeouts, or expected-failure rules.
 
 ## Troubleshooting and limitations

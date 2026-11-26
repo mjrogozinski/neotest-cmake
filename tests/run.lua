@@ -73,6 +73,49 @@ require('nio').run(function()
     assert(debug_spec.strategy.args[#debug_spec.strategy.args] == '--gtest_filter=Numbers/Values.Positive/1')
     local debug_run = vim.system(debug_spec.command, { cwd = debug_spec.cwd, env = debug_spec.env, text = true }):wait()
     assert(debug_run.code == 0 and debug_run.stdout:find('1 test from 1 test suite ran', 1, true))
+    -- Duplicate CTest shards must collapse into one filtered binary launch.
+    local project = require('neotest-cmake.project')
+    local registrations = project.registrations
+    local shard_ok, shard_error = xpcall(function()
+      project.registrations = function(selection)
+        local entries = registrations(selection)
+        local shards = {}
+        for _, entry in ipairs(entries) do
+          for index = 0, 1 do
+            local shard = vim.deepcopy(entry)
+            shard.env.GTEST_TOTAL_SHARDS = '2'
+            shard.env.GTEST_SHARD_INDEX = tostring(index)
+            shard.env.GTEST_SHARD_STATUS_FILE = '/tmp/shard-status-' .. index
+            shards[#shards + 1] = shard
+          end
+        end
+        return shards
+      end
+      for _, strategy in ipairs({ 'integrated', 'dap' }) do
+        local spec = adapter.build_spec({ tree = debug_node, strategy = strategy })
+        assert(spec.command[1] ~= 'ctest' and spec.context.direct)
+        assert(spec.env.GTEST_TOTAL_SHARDS == '1' and spec.env.GTEST_SHARD_INDEX == '0')
+        local result = vim.system(spec.command, { cwd = spec.cwd, env = spec.env, text = true }):wait()
+        assert(result.code == 0 and result.stdout:find('1 test from 1 test suite ran', 1, true))
+        if strategy == 'dap' then
+          assert(spec.strategy.program == spec.command[1])
+          assert(spec.strategy.env.GTEST_TOTAL_SHARDS == '1')
+        end
+      end
+    end, debug.traceback)
+    project.registrations = registrations
+    assert(shard_ok, shard_error)
+    local old_total, old_index = vim.env.GTEST_TOTAL_SHARDS, vim.env.GTEST_SHARD_INDEX
+    vim.env.GTEST_TOTAL_SHARDS, vim.env.GTEST_SHARD_INDEX = '2', '1'
+    local inherited_ok, inherited_error = xpcall(function()
+      local spec = adapter.build_spec({ tree = debug_node, strategy = 'integrated' })
+      assert(spec.context.direct and spec.env.GTEST_TOTAL_SHARDS == '1')
+      local result = vim.system(spec.command, { cwd = spec.cwd, env = spec.env, text = true }):wait()
+      assert(result.code == 0 and result.stdout:find('1 test from 1 test suite ran', 1, true))
+    end, debug.traceback)
+    vim.env.GTEST_TOTAL_SHARDS, vim.env.GTEST_SHARD_INDEX = old_total, old_index
+    assert(inherited_ok, inherited_error)
+
     local values = tree:get_key(root .. '/cases.cpp::Values.Positive')
     assert(values:data().type == 'namespace' and #values:children() == 4)
     assert(require('neotest.lib').positions.nearest(tree, values:data().range[1]):data().id == values:data().id,
