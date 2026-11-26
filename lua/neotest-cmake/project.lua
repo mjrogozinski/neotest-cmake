@@ -320,11 +320,19 @@ local function snapshot(selection, artifacts)
   return stamp
 end
 
-function M.prepare(tree, parent)
+local function run_context(tree, strategy)
   local ctx = M.context(tree:data().path)
+  if strategy == 'dap' then
+    return context(ctx.root, ctx.build_dir .. '/.neotest-debug', 'Debug')
+  end
+  return ctx
+end
+
+function M.prepare(tree, parent, strategy)
+  local ctx = run_context(tree, strategy)
   local selection = select(ctx, M.files(tree))
   local failure
-  if ctx.options.build == false then
+  if ctx.options.build == false and strategy ~= 'dap' then
     selection.stamp = snapshot(selection)
     return selection
   end
@@ -339,15 +347,20 @@ function M.prepare(tree, parent)
       failure.files = selection.affected
     end
     mark(true)
-    if not vim.uv.fs_stat(ctx.build_dir .. '/CMakeCache.txt') then
-      fail('configure', { code = 1, stderr = 'Configure the CMake build first: ' .. ctx.build_dir })
+    local base = strategy == 'dap' and M.context(tree:data().path) or ctx
+    if not vim.uv.fs_stat(base.build_dir .. '/CMakeCache.txt') then
+      fail('configure', { code = 1, stderr = 'Configure the CMake build first: ' .. base.build_dir })
       return
     end
-    if #selection.model == 0 then
+    if strategy == 'dap' or #selection.model == 0 then
       local query = ctx.build_dir .. '/.cmake/api/v1/query'
       vim.fn.mkdir(query, 'p')
       vim.fn.writefile({}, query .. '/codemodel-v2')
       local command = { ctx.options.cmake, '-S', ctx.root, '-B', ctx.build_dir }
+      if strategy == 'dap' then
+        require('neotest-cmake.debug').configure(command, base.build_dir, ctx.build_dir)
+        command[#command + 1] = '-DCMAKE_BUILD_TYPE=Debug'
+      end
       local result = parent
           and require('neotest-cmake.overseer').process(parent, command, ctx.root, ctx.options.build_timeout)
         or process(ctx, command, ctx.root, nil, ctx.options.build_timeout)
@@ -402,12 +415,12 @@ function M.prepared(selection)
   return { selection = selection, stamp = stamp }
 end
 
-function M.reuse(prepared, tree)
+function M.reuse(prepared, tree, strategy)
   if type(prepared) ~= 'table' or not prepared.selection or prepared.used then
     return
   end
   prepared.used = true
-  local selection, ctx = prepared.selection, M.context(tree:data().path)
+  local selection, ctx = prepared.selection, run_context(tree, strategy)
   local previous = selection.context
   if
     ctx.root == previous.root

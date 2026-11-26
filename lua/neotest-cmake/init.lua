@@ -29,8 +29,8 @@ function M.discover_positions(path)
     return source.tree(file, definitions, project.keys(path))
   end)
 end
-function M.prepare(tree, parent)
-  local selection, failure = project.prepare(tree, parent)
+function M.prepare(tree, parent, strategy)
+  local selection, failure = project.prepare(tree, parent, strategy)
   local ctx = selection.context
   return not failure and selection.files or nil,
     ctx.build_dir,
@@ -44,10 +44,10 @@ local function regex(s)
 end
 
 function M.build_spec(args)
-  local selection = project.reuse(args._cmake_prepared, args.tree)
+  local selection = project.reuse(args._cmake_prepared, args.tree, args.strategy)
   local failure
   if not selection then
-    selection, failure = project.prepare(args.tree, args._cmake_parent)
+    selection, failure = project.prepare(args.tree, args._cmake_parent, args.strategy)
   end
   if failure then
     return diagnostics.blocked(args.tree, failure)

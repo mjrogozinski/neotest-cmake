@@ -391,7 +391,8 @@ All adapter options and their defaults:
 
 Options are shared by this adapter instance. Keep `build = true` unless an
 external build integration guarantees a fresh binary. Setting it to `false`
-opts out of the automatic build safeguard.
+opts out of the automatic build safeguard for normal runs; DAP runs always
+configure and build Debug.
 
 
 BUILD DIRECTORIES AND PRESETS ~
@@ -468,6 +469,16 @@ selections and debugger launches use `GTEST_TOTAL_SHARDS=1` and
 `GTEST_SHARD_INDEX=0`, so the selected case cannot be excluded by a shard.
 CTest fixtures are rejected for these direct runs. File and directory runs
 retain CTest sharding.
+
+Every `strategy = "dap"` run first creates or reuses a dedicated
+`.neotest-debug` directory inside the selected build directory and configures
+it with `-DCMAKE_BUILD_TYPE=Debug`, then builds with `--config Debug` and
+selects the Debug executable. This also applies when `build = false`. The
+selected build cache and binaries remain untouched. The Debug tree inherits the
+generator, compiler, toolchain and public cache options from the selected
+build; CMake regenerates internal metadata and build paths. Only the selected
+test targets and their dependencies are built, and subsequent debugging reuses
+this tree. A failed configure or build prevents debugger launch.
 
 Debugging builds first, then launches GoogleTest directly with the selected
 filter and the registration’s working directory/environment. A debug

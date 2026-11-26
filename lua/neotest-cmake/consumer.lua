@@ -164,7 +164,7 @@ return function(client)
     if not vim.startswith(adapter_id or '', 'neotest-cmake:') or args.strategy == 'dap' then
       if args.strategy == 'dap' and vim.startswith(adapter_id or '', 'neotest-cmake:') then
         return preparing(tree, adapter_id, function()
-          local files, _, _, failure, prepared = require('neotest-cmake').prepare(tree)
+          local files, _, _, failure, prepared = require('neotest-cmake').prepare(tree, nil, args.strategy)
           if not files then
             invalidate(adapter_id, failure.files)
             return
