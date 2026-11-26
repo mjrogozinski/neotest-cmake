@@ -10,23 +10,28 @@ nio.run(function()
     vim.cmd.cd(alias)
     vim.cmd.edit('cases.cpp')
     local activity = require('neotest-cmake.activity')
-    local adapter = require('neotest-cmake') { root = root, build_dir = '../../build/fixture' }
+    local adapter = require('neotest-cmake')({ root = root, build_dir = '../../build/fixture' })
     local neotest, client = require('neotest'), nil
     require('neotest.lib').subprocess.init = function() end
-    neotest.setup {
-      adapters = { adapter }, discovery = { enabled = true },
+    neotest.setup({
+      adapters = { adapter },
+      discovery = { enabled = true },
       consumers = {
         cmake = require('neotest-cmake.consumer'),
-        check = function(c) client = c; return {} end,
+        check = function(c)
+          client = c
+          return {}
+        end,
       },
-    }
+    })
     local files = require('neotest.lib').files
     local find, notify, system = files.find, vim.notify, vim.system
     local entered, release, done = nio.control.event(), nio.control.event(), nio.control.event()
     local first, startup_error = true, nil
     local discovery_finished = nio.control.event()
     vim.api.nvim_create_autocmd('User', {
-      pattern = 'NeotestCmakeDiscoveryFinished', once = true,
+      pattern = 'NeotestCmakeDiscoveryFinished',
+      once = true,
       callback = function(event)
         assert(event.data.root == root)
         discovery_finished.set()
@@ -41,20 +46,36 @@ nio.run(function()
       return find(path, ...)
     end
     nio.run(function()
-      local success, reason = pcall(function() client:get_adapters() end)
-      if not success then startup_error = reason end
+      local success, reason = pcall(function()
+        client:get_adapters()
+      end)
+      if not success then
+        startup_error = reason
+      end
       done.set()
     end)
     entered.wait()
     local messages, launches = {}, 0
-    vim.notify = function(message, level) messages[#messages + 1] = { message, level } end
-    vim.system = function(...) launches = launches + 1; return system(...) end
+    vim.notify = function(message, level)
+      messages[#messages + 1] = { message, level }
+    end
+    vim.system = function(...)
+      launches = launches + 1
+      return system(...)
+    end
     local qf = vim.fn.getqflist({ changedtick = 0, title = 0 })
     local completed, requested = nio.control.event(), nio.control.event()
-    client.listeners.results = function(_, _, partial) if not partial then completed.set() end end
-    nio.run(function() neotest.cmake.run(vim.fn.expand('%')); requested.set() end)
+    client.listeners.results = function(_, _, partial)
+      if not partial then
+        completed.set()
+      end
+    end
+    nio.run(function()
+      neotest.cmake.run(vim.fn.expand('%'))
+      requested.set()
+    end)
     neotest.run.run('cases.cpp')
-    neotest.run.run { alias .. '/cases.cpp::Basic.Pass', adapter = 'neotest-cmake:' .. alias }
+    neotest.run.run({ alias .. '/cases.cpp::Basic.Pass', adapter = 'neotest-cmake:' .. alias })
     nio.sleep(100)
     vim.system, files.find = system, find
     release.set()
@@ -67,11 +88,15 @@ nio.run(function()
     assert(#messages == 3, 'wrong notification count: ' .. vim.inspect(messages))
     for i = 1, 2 do
       local message = messages[i]
-      assert(message[1]:find('discovery is still in progress', 1, true)
-        and message[2] == vim.log.levels.INFO, vim.inspect(message))
+      assert(
+        message[1]:find('discovery is still in progress', 1, true) and message[2] == vim.log.levels.INFO,
+        vim.inspect(message)
+      )
     end
-    assert(messages[3][1]:find('You can run tests now.', 1, true)
-      and messages[3][2] == vim.log.levels.INFO, 'missing completion notification')
+    assert(
+      messages[3][1]:find('You can run tests now.', 1, true) and messages[3][2] == vim.log.levels.INFO,
+      'missing completion notification'
+    )
     assert(not activity.blocked('cases.cpp'), 'startup scope was not released')
     -- The original relative-path action resumes without another invocation.
     requested.wait()
@@ -79,7 +104,12 @@ nio.run(function()
     assert(client:get_results('neotest-cmake:' .. root)[root .. '/cases.cpp::Basic.Pass'].status == 'passed')
     vim.uv.fs_unlink(alias)
   end, debug.traceback)
-  if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') end
-  print('Startup discovery checks passed: relative paths, symlinks, queued first run and untouched quickfix')
+  if not ok then
+    io.stderr:write(err .. '\n')
+    vim.cmd('cquit 1')
+  end
+  io.stdout:write(
+    'Startup discovery checks passed: relative paths, symlinks, queued first run and untouched quickfix\n'
+  )
   vim.cmd('qa!')
 end)

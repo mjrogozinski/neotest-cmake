@@ -7,14 +7,14 @@ function M.parent(root, name, run)
   if not ok then
     return
   end
-  local parent = overseer.new_task {
+  local parent = overseer.new_task({
     name = 'Build and test ' .. name,
     cwd = root,
     strategy = { 'neotest_cmake', run = run },
     components = M.components,
-  }
+  })
   parent:subscribe('on_dispose', function()
-    for _, child in ipairs(overseer.list_tasks { include_ephemeral = true }) do
+    for _, child in ipairs(overseer.list_tasks({ include_ephemeral = true })) do
       if child.parent_id == parent.id then
         child:dispose(true)
       end
@@ -22,7 +22,7 @@ function M.parent(root, name, run)
   end)
   parent:subscribe('on_status', function(_, status)
     if status == 'CANCELED' then
-      for _, child in ipairs(overseer.list_tasks { include_ephemeral = true }) do
+      for _, child in ipairs(overseer.list_tasks({ include_ephemeral = true })) do
         if child.parent_id == parent.id and child:is_running() then
           child:stop()
         end
@@ -38,7 +38,7 @@ function M.finish(parent, success)
     return
   end
   local lines, ran_tests = {}, false
-  for _, child in ipairs(require('overseer').list_tasks { include_ephemeral = true }) do
+  for _, child in ipairs(require('overseer').list_tasks({ include_ephemeral = true })) do
     if child.parent_id == parent.id then
       ran_tests = ran_tests or child.name == 'Run tests'
       lines[#lines + 1] = child.status .. ' ' .. child.name
@@ -52,9 +52,9 @@ function M.process(parent, command, cwd, timeout)
   if not parent:is_running() then
     return { code = 1, stderr = 'Build cancelled' }
   end
-  local nio = require 'nio'
+  local nio = require('nio')
   local done = nio.control.event()
-  local task = require('overseer').new_task {
+  local task = require('overseer').new_task({
     name = vim.tbl_contains(command, '--build') and 'Build tests' or 'Configure tests',
     cmd = command,
     cwd = cwd,
@@ -62,7 +62,7 @@ function M.process(parent, command, cwd, timeout)
     ephemeral = true,
     strategy = 'system',
     components = M.components,
-  }
+  })
   task:subscribe('on_complete', function()
     done.set()
     return false
@@ -80,7 +80,10 @@ function M.process(parent, command, cwd, timeout)
     timer:close()
   end
   local buf = task:get_bufnr()
-  local output = buf and vim.api.nvim_buf_is_valid(buf) and table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n') or ''
+  local output = buf
+      and vim.api.nvim_buf_is_valid(buf)
+      and table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n')
+    or ''
   return { code = task.exit_code or 1, stdout = output, stderr = '' }
 end
 return M

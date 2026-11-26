@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "LuaJIT",
+  "workspace.checkThirdParty": false,
+  "workspace.library": ["$VIMRUNTIME/lua", ".dependencies/neotest/lua", ".dependencies/nvim-nio/lua", ".dependencies/plenary.nvim/lua"],
+  "workspace.ignoreDir": [".git", "build", ".dependencies"],
+  "diagnostics.libraryFiles": "Disable",
+  "diagnostics.globals": ["vim"],
+  "diagnostics.neededFileStatus": {"codestyle-check": "None"}
+}

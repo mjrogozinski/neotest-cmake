@@ -2,13 +2,19 @@ local M = {}
 local models = {}
 local function read(path)
   local fd = io.open(path, 'rb')
-  if not fd then return nil end
-  local text = fd:read('*a'); fd:close(); return text
+  if not fd then
+    return nil
+  end
+  local text = fd:read('*a')
+  fd:close()
+  return text
 end
 M.read = read
 function M.json(path)
   local text = read(path)
-  if not text then return nil end
+  if not text then
+    return nil
+  end
   local ok, data = pcall(vim.json.decode, text)
   return ok and data or nil
 end
@@ -17,25 +23,36 @@ function M.join(root, path)
 end
 function M.framework(command, overrides, cwd)
   local exe = command and command[1]
-  if not exe then return nil end
+  if not exe then
+    return nil
+  end
   local explicit = overrides[exe] or overrides[vim.fs.basename(exe)]
-  if explicit then return explicit ~= 'ctest' and explicit or nil end
+  if explicit then
+    return explicit ~= 'ctest' and explicit or nil
+  end
   exe = M.join(cwd, exe)
   local file = io.open(exe, 'rb')
-  if not file then return nil end
+  if not file then
+    return nil
+  end
   local tail, found = '', nil
   -- Inspect signatures, never run an unknown executable just to probe its CLI.
   for _ = 1, 1024 do
     local chunk = file:read(65536)
-    if not chunk then break end
+    if not chunk then
+      break
+    end
     local text = tail .. chunk
     -- Static builds contain the flag string. Shared builds (notably Nix)
     -- instead retain their GoogleTest library dependency names in the binary.
-    if text:find('gtest_list_tests', 1, true)
+    if
+      text:find('gtest_list_tests', 1, true)
       or text:match('libgtest[^%z/%s]*%.dylib')
       or text:match('libgtest[^%z/%s]*%.so')
-      or text:match('gtest[^%z/%s]*%.dll') then
-      found = 'gtest'; break
+      or text:match('gtest[^%z/%s]*%.dll')
+    then
+      found = 'gtest'
+      break
     end
     tail = text:sub(-64)
   end
@@ -50,12 +67,18 @@ function M.targets(build, config)
   local stat = index_path and vim.uv.fs_stat(index_path)
   local key = build .. '\0' .. (config or '')
   local signature = stat and vim.json.encode({ index_path, stat.size, stat.mtime })
-  if signature and models[key] and models[key].signature == signature then return models[key].targets end
+  if signature and models[key] and models[key].signature == signature then
+    return models[key].targets
+  end
   local index = M.json(index_path or '')
-  if not index then return {} end
+  if not index then
+    return {}
+  end
   local modelref = index.reply and index.reply['codemodel-v2']
   local model = modelref and M.json(base .. modelref.jsonFile)
-  if not model then return {} end
+  if not model then
+    return {}
+  end
   local out = {}
   for _, cfg in ipairs(model.configurations or {}) do
     if not config or config == '' or cfg.name == config then
@@ -75,26 +98,38 @@ function M.targets(build, config)
           out[#out + 1] = target
         end
       end
-      if not config or config == '' then break end
+      if not config or config == '' then
+        break
+      end
     end
   end
   -- Keep source ownership (including linked libraries) on the executable so
   -- both target selection and result invalidation use the same metadata.
   local by_id = {}
-  for _, target in ipairs(out) do by_id[target.id] = target end
+  for _, target in ipairs(out) do
+    by_id[target.id] = target
+  end
   local function collect(target, seen)
-    if seen[target.id] then return end
+    if seen[target.id] then
+      return
+    end
     seen[target.id] = true
     for _, dep in ipairs(target.dependencies or {}) do
       local child = by_id[dep.id]
       if child then
         collect(child, seen)
-        for path in pairs(child.files) do target.files[path] = true end
+        for path in pairs(child.files) do
+          target.files[path] = true
+        end
       end
     end
   end
-  for _, target in ipairs(out) do collect(target, {}) end
-  if signature then models[key] = { signature = signature, targets = out } end
+  for _, target in ipairs(out) do
+    collect(target, {})
+  end
+  if signature then
+    models[key] = { signature = signature, targets = out }
+  end
   return out
 end
 function M.artifacts(build, config)
@@ -108,17 +143,32 @@ end
 -- Resolve ownership once for build preparation, enumeration and invalidation.
 function M.select(build, config, files)
   local model = M.targets(build, config)
-  local selected = { model = model, targets = {}, artifacts = {}, files = files, affected = vim.deepcopy(files or {}),
-    executables = files and #model > 0 and {} or nil }
+  local selected = {
+    model = model,
+    targets = {},
+    artifacts = {},
+    files = files,
+    affected = vim.deepcopy(files or {}),
+    executables = files and #model > 0 and {} or nil,
+  }
   for _, target in ipairs(model) do
     local owns = not files
-    for path in pairs(files or {}) do if target.files[path] then owns = true; break end end
+    for path in pairs(files or {}) do
+      if target.files[path] then
+        owns = true
+        break
+      end
+    end
     if owns and #target.executables > 0 then
       selected.targets[#selected.targets + 1] = target
-      for path in pairs(target.files) do selected.affected[path] = true end
+      for path in pairs(target.files) do
+        selected.affected[path] = true
+      end
       for _, exe in ipairs(target.executables) do
         selected.artifacts[#selected.artifacts + 1] = exe
-        if selected.executables then selected.executables[vim.uv.fs_realpath(exe) or exe] = true end
+        if selected.executables then
+          selected.executables[vim.uv.fs_realpath(exe) or exe] = true
+        end
       end
     end
   end

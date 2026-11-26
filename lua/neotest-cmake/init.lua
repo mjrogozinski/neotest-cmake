@@ -3,15 +3,18 @@ local source = require('neotest-cmake.source')
 local project = require('neotest-cmake.project')
 local diagnostics = require('neotest-cmake.diagnostics')
 local activity = require('neotest-cmake.activity')
+---@class neotest-cmake.Adapter: neotest.Adapter
+---@overload fun(options?: neotest-cmake.Options): neotest-cmake.Adapter
 local M = { name = 'neotest-cmake' }
 local runner = vim.fs.dirname(debug.getinfo(1, 'S').source:sub(2)) .. '/runner.lua'
 M.root, M.discover = project.root, project.discover
 function M.filter_dir(name, relpath, root)
-  return name ~= '.git' and name ~= 'CMakeFiles'
-    and discovery.join(root, relpath) ~= project.context(root).build_dir
+  return name ~= '.git' and name ~= 'CMakeFiles' and discovery.join(root, relpath) ~= project.context(root).build_dir
 end
 function M.is_test_file(path)
-  if not vim.tbl_contains({ 'c', 'cc', 'cpp', 'cxx', 'h', 'hpp', 'hxx' }, vim.fn.fnamemodify(path, ':e')) then return false end
+  if not vim.tbl_contains({ 'c', 'cc', 'cpp', 'cxx', 'h', 'hpp', 'hxx' }, vim.fn.fnamemodify(path, ':e')) then
+    return false
+  end
   return activity.with(project.root(path), function()
     local _, definitions = source.definitions(path)
     return #definitions > 0
@@ -20,30 +23,43 @@ end
 function M.discover_positions(path)
   return activity.with(project.root(path), function()
     local file, definitions = source.definitions(path)
-    if #definitions == 0 then return nil end
+    if #definitions == 0 then
+      return nil
+    end
     return source.tree(file, definitions, project.keys(path))
   end)
 end
 function M.prepare(tree, parent)
   local selection, failure = project.prepare(tree, parent)
   local ctx = selection.context
-  return not failure and selection.files or nil, ctx.build_dir, ctx.config, failure,
+  return not failure and selection.files or nil,
+    ctx.build_dir,
+    ctx.config,
+    failure,
     not failure and project.prepared(selection) or nil
 end
 
-local function regex(s) return (s:gsub('([\\%.%[%]%^%$%*%+%?%(%){|}])', '\\%1')) end
+local function regex(s)
+  return (s:gsub('([\\%.%[%]%^%$%*%+%?%(%){|}])', '\\%1'))
+end
 
 function M.build_spec(args)
   local selection = project.reuse(args._cmake_prepared, args.tree)
   local failure
-  if not selection then selection, failure = project.prepare(args.tree, args._cmake_parent) end
-  if failure then return diagnostics.blocked(args.tree, failure) end
+  if not selection then
+    selection, failure = project.prepare(args.tree, args._cmake_parent)
+  end
+  if failure then
+    return diagnostics.blocked(args.tree, failure)
+  end
   local ctx = selection.context
   local build, config, opts = ctx.build_dir, ctx.config, ctx.options
   local tests = {}
   for _, node in args.tree:iter_nodes() do
     local pos = node:data()
-    if pos.type == 'test' then tests[#tests + 1] = pos end
+    if pos.type == 'test' then
+      tests[#tests + 1] = pos
+    end
   end
   assert(#tests > 0, 'neotest-cmake: no GoogleTest source positions selected')
   local registrations = project.registrations(selection)
@@ -52,7 +68,9 @@ function M.build_spec(args)
     for _, reg in ipairs(registrations) do
       if reg.env.GTEST_TOTAL_SHARDS or vim.env.GTEST_TOTAL_SHARDS then
         for _, key in ipairs(reg.keys) do
-          if source.matches(tests[1], key.key) then direct_selection = true end
+          if source.matches(tests[1], key.key) then
+            direct_selection = true
+          end
         end
       end
     end
@@ -69,18 +87,27 @@ function M.build_spec(args)
       end
     end
     if next(ids) then
-      for id in pairs(ids) do matched[id] = true end
+      for id in pairs(ids) do
+        matched[id] = true
+      end
       if direct_selection then
         debugging[#debugging + 1] = { registration = reg, mappings = ids }
       elseif reg.kind == 'direct' then
         local keys, disabled = {}, {}
-        for _, key in ipairs(reg.keys) do disabled[key.key] = key.disabled end
-        for _, values in pairs(ids) do vim.list_extend(keys, values) end
+        for _, key in ipairs(reg.keys) do
+          disabled[key.key] = key.disabled
+        end
+        for _, values in pairs(ids) do
+          vim.list_extend(keys, values)
+        end
         table.sort(keys)
         local command = { reg.executable, '--gtest_color=no', '--gtest_filter=' .. table.concat(keys, ':') }
         vim.list_extend(command, args.extra_args or {})
-        specs[#specs + 1] = { command = command, cwd = build,
-          context = { direct = true, mappings = ids, disabled = disabled, tests = {} } }
+        specs[#specs + 1] = {
+          command = command,
+          cwd = build,
+          context = { direct = true, mappings = ids, disabled = disabled, tests = {} },
+        }
       else
         selected[#selected + 1] = regex(reg.name)
         mappings[reg.name] = ids
@@ -89,12 +116,14 @@ function M.build_spec(args)
   end
   if direct_selection then
     assert(#debugging > 0, 'neotest-cmake: no built GoogleTest cases selected for debugging')
-    local command, cwd, env, signature, mappings, disabled, keys = nil, nil, nil, nil, {}, {}, {}
+    local command, cwd, env, signature, debug_mappings, disabled, keys = nil, nil, nil, nil, {}, {}, {}
     for _, entry in ipairs(debugging) do
       local reg = entry.registration
       local props = reg.properties
-      assert(not props.FIXTURES_REQUIRED and not props.FIXTURES_SETUP and not props.FIXTURES_CLEANUP,
-        'neotest-cmake: direct runs do not support CTest fixtures; use a normal file test run')
+      assert(
+        not props.FIXTURES_REQUIRED and not props.FIXTURES_SETUP and not props.FIXTURES_CLEANUP,
+        'neotest-cmake: direct runs do not support CTest fixtures; use a normal file test run'
+      )
       local argv = {}
       for _, arg in ipairs(reg.command) do
         if not vim.startswith(arg, '--gtest_filter=') and not vim.startswith(arg, '--gtest_color=') then
@@ -108,53 +137,105 @@ function M.build_spec(args)
       launch_env.GTEST_SHARD_INDEX = '0'
       launch_env.GTEST_SHARD_STATUS_FILE = nil
       local current = vim.json.encode({ argv, launch_cwd, launch_env })
-      assert(not signature or signature == current,
-        'neotest-cmake: debug selection must use one executable with one launch environment')
+      assert(
+        not signature or signature == current,
+        'neotest-cmake: debug selection must use one executable with one launch environment'
+      )
       command, cwd, env, signature = argv, launch_cwd, launch_env, current
       for id, values in pairs(entry.mappings) do
-        mappings[id] = mappings[id] or {}
-        vim.list_extend(mappings[id], values)
-        for _, key in ipairs(values) do keys[key] = true end
+        debug_mappings[id] = debug_mappings[id] or {}
+        vim.list_extend(debug_mappings[id], values)
+        for _, key in ipairs(values) do
+          keys[key] = true
+        end
       end
-      for _, key in ipairs(reg.keys) do disabled[key.key] = key.disabled end
+      for _, key in ipairs(reg.keys) do
+        disabled[key.key] = key.disabled
+      end
     end
     local filter = vim.tbl_keys(keys)
     table.sort(filter)
     vim.list_extend(command, { '--gtest_color=no', '--gtest_filter=' .. table.concat(filter, ':') })
     vim.list_extend(command, args.extra_args or {})
-    local launch = vim.tbl_extend('force', opts.dap, { request = 'launch', name = 'GoogleTest',
-      program = command[1], args = vim.list_slice(command, 2), cwd = cwd, env = env })
+    local launch = vim.tbl_extend('force', opts.dap, {
+      request = 'launch',
+      name = 'GoogleTest',
+      program = command[1],
+      args = vim.list_slice(command, 2),
+      cwd = cwd,
+      env = env,
+    })
     local strategy = args.strategy == 'dap' and launch or nil
     if args.strategy ~= 'dap' and args._cmake_parent then
-      strategy = { parent_id = args._cmake_parent.id, name = 'Run tests',
-        components = require('neotest-cmake.overseer').components }
+      strategy = {
+        parent_id = args._cmake_parent.id,
+        name = 'Run tests',
+        components = require('neotest-cmake.overseer').components,
+      }
     end
-    return { command = command, cwd = cwd, env = env, strategy = strategy,
-      context = { direct = true, mappings = mappings, disabled = disabled, tests = {} } }
+    return {
+      command = command,
+      cwd = cwd,
+      env = env,
+      strategy = strategy,
+      context = { direct = true, mappings = debug_mappings, disabled = disabled, tests = {} },
+    }
   end
   if #selected > 0 then
     local report = vim.fn.tempname() .. '.xml'
-    local command = { opts.ctest, '--test-dir', build, '--output-on-failure',
-      '--output-junit', report, '--test-output-size-passed', '0', '--test-output-size-failed', '0',
-      '--parallel', tostring(opts.jobs), '-R', '^(' .. table.concat(selected, '|') .. ')$' }
-    if config ~= '' then vim.list_extend(command, { '-C', config }) end
+    local command = {
+      opts.ctest,
+      '--test-dir',
+      build,
+      '--output-on-failure',
+      '--output-junit',
+      report,
+      '--test-output-size-passed',
+      '0',
+      '--test-output-size-failed',
+      '0',
+      '--parallel',
+      tostring(opts.jobs),
+      '-R',
+      '^(' .. table.concat(selected, '|') .. ')$',
+    }
+    if config ~= '' then
+      vim.list_extend(command, { '-C', config })
+    end
     vim.list_extend(command, opts.ctest_args)
     vim.list_extend(command, args.extra_args or {})
-    table.insert(specs, 1, { command = command, cwd = build, context = { report = report, mappings = mappings, tests = {} } })
+    table.insert(
+      specs,
+      1,
+      { command = command, cwd = build, context = { report = report, mappings = mappings, tests = {} } }
+    )
   end
-  assert(#specs > 0, 'neotest-cmake: no matching test executables in ' .. build
-    .. '; check source ownership and compiled GoogleTest definitions.')
+  assert(
+    #specs > 0,
+    'neotest-cmake: no matching test executables in '
+      .. build
+      .. '; check source ownership and compiled GoogleTest definitions.'
+  )
   -- Neotest merges results from multiple specs. Only one spec reports each
   -- unmatched source definition, so a skip cannot overwrite another run's pass.
   for _, pos in ipairs(tests) do
-    if not matched[pos.id] then specs[1].context.tests[#specs[1].context.tests + 1] = pos end
+    if not matched[pos.id] then
+      specs[1].context.tests[#specs[1].context.tests + 1] = pos
+    end
   end
   local function task_spec(spec)
-    if args._cmake_parent then spec.strategy = { parent_id = args._cmake_parent.id, name = 'Run tests',
-      components = require('neotest-cmake.overseer').components } end
+    if args._cmake_parent then
+      spec.strategy = {
+        parent_id = args._cmake_parent.id,
+        name = 'Run tests',
+        components = require('neotest-cmake.overseer').components,
+      }
+    end
     return spec
   end
-  if #specs == 1 then return task_spec(specs[1]) end
+  if #specs == 1 then
+    return task_spec(specs[1])
+  end
   -- Older neotest runners share process keys/output paths across specs for a
   -- single tree. Use one strategy process and execute its argv lists in order.
   local manifest = vim.fn.tempname() .. '.json'
@@ -164,13 +245,18 @@ function M.build_spec(args)
     commands[#commands + 1] = { command = spec.command, cwd = spec.cwd, output = spec.context.output }
   end
   vim.fn.writefile({ vim.json.encode(commands) }, manifest)
-  return task_spec({ command = { vim.v.progpath, '--headless', '-u', 'NONE', '-i', 'NONE', '-l', runner, manifest },
-    cwd = build, context = { runs = specs, manifest = manifest } })
+  return task_spec({
+    command = { vim.v.progpath, '--headless', '-u', 'NONE', '-i', 'NONE', '-l', runner, manifest },
+    cwd = build,
+    context = { runs = specs, manifest = manifest },
+  })
 end
 
 M.results = require('neotest-cmake.results').collect
 
-return setmetatable(M, { __call = function(_, config)
-  project.configure(config)
-  return M
-end })
+return setmetatable(M, {
+  __call = function(_, config)
+    project.configure(config)
+    return M
+  end,
+})

@@ -1,21 +1,21 @@
 -- Real asynchronous build/test processes and the actual Neotest consumer.
-local nio = require 'nio'
-local deps = vim.env.NEOTEST_DEPS or vim.fn.expand '~/.local/share/nvim/lazy'
+local nio = require('nio')
+local deps = vim.env.NEOTEST_DEPS or vim.fn.expand('~/.local/share/nvim/lazy')
 vim.opt.rtp:append(deps .. '/overseer.nvim')
 local available, overseer = pcall(require, 'overseer')
 if not available then
   if vim.env.NEOTEST_REQUIRE_OVERSEER == '1' then
-    error 'Overseer is required for this test run'
+    error('Overseer is required for this test run')
   end
-  print 'Skipping optional Overseer integration checks'
-  vim.cmd 'qa!'
+  io.stdout:write('Skipping optional Overseer integration checks\n')
+  vim.cmd('qa!')
   return
 end
 local watchdog = vim.defer_fn(function()
-  io.stderr:write 'Timed out waiting for the asynchronous Overseer integration test\n'
-  vim.cmd 'cquit 1'
+  io.stderr:write('Timed out waiting for the asynchronous Overseer integration test\n')
+  vim.cmd('cquit 1')
 end, 120000)
-overseer.setup {}
+overseer.setup({})
 require('neotest.lib').subprocess.init = function() end
 nio.run(function()
   nio.scheduler()
@@ -53,7 +53,9 @@ nio.run(function()
         '#include <gtest/gtest.h>',
         '#include <thread>',
         '#include <chrono>',
-        'TEST(Async, Case) { std::this_thread::sleep_for(std::chrono::seconds(1)); EXPECT_TRUE(' .. (failing and 'false' or 'true') .. '); }',
+        'TEST(Async, Case) { std::this_thread::sleep_for(std::chrono::seconds(1)); EXPECT_TRUE('
+          .. (failing and 'false' or 'true')
+          .. '); }',
         'class ValueChecks : public testing::TestWithParam<int> {};',
         'TEST_P(ValueChecks, Positive) { EXPECT_GT(GetParam(), 0); }',
         'INSTANTIATE_TEST_SUITE_P(Inputs, ValueChecks, testing::Values(1, 2));',
@@ -72,14 +74,14 @@ nio.run(function()
     event.wait()
     nio.scheduler()
     assert(configured.code == 0, configured.stderr)
-    local neotest = require 'neotest'
+    local neotest = require('neotest')
     local client, started_runs = nil, 0
-    neotest.setup {
-      adapters = { require 'neotest-cmake' { root = root, build_dir = 'build', cmake = cmake } },
+    neotest.setup({
+      adapters = { require('neotest-cmake')({ root = root, build_dir = 'build', cmake = cmake }) },
       discovery = { enabled = false },
       consumers = {
-        cmake = require 'neotest-cmake.consumer',
-        overseer = require 'neotest.consumers.overseer',
+        cmake = require('neotest-cmake.consumer'),
+        overseer = require('neotest.consumers.overseer'),
         check = function(c)
           client = c
           c.listeners.run = function()
@@ -88,13 +90,12 @@ nio.run(function()
           return {}
         end,
       },
-    }
+    })
     vim.cmd.edit(path)
-    local overseer = require 'overseer'
     local function children(parent)
       return vim.tbl_filter(function(t)
         return t.parent_id == parent.id
-      end, overseer.list_tasks { include_ephemeral = true })
+      end, overseer.list_tasks({ include_ephemeral = true }))
     end
     local function wait_for(check)
       for _ = 1, 3000 do
@@ -103,17 +104,17 @@ nio.run(function()
         end
         nio.sleep(20)
       end
-      error 'Timed out waiting for task'
+      error('Timed out waiting for task')
     end
     local function invoke()
       local existing = {}
-      for _, t in ipairs(overseer.list_tasks {}) do
+      for _, t in ipairs(overseer.list_tasks({})) do
         existing[t.id] = true
       end
       neotest.cmake.run(path)
       local parent
       wait_for(function()
-        for _, t in ipairs(overseer.list_tasks {}) do
+        for _, t in ipairs(overseer.list_tasks({})) do
           if not existing[t.id] and t.name:find('Build and test', 1, true) then
             parent = t
             return true
@@ -153,7 +154,7 @@ nio.run(function()
         end
         nio.sleep(20)
       end
-      assert(parent.status == status, vim.inspect { parent.status, children(parent) })
+      assert(parent.status == status, vim.inspect({ parent.status, children(parent) }))
       assert(#children(parent) == count, 'unexpected number of subtasks')
       for stage, span in pairs(progress) do
         assert(span[2] - span[1] >= 10, 'main loop stalled during ' .. stage)
@@ -162,8 +163,11 @@ nio.run(function()
         assert(progress['Build tests'] and progress['Run tests'])
         local adapter_id = 'neotest-cmake:' .. root
         local known = client:get_results(adapter_id)
-        assert(known[path .. '::Async.Case'].status == (status == 'SUCCESS' and 'passed' or 'failed'), 'Neotest retained a stale case result')
-        for _, name in ipairs { 'Inputs/ValueChecks.Positive/0', 'Inputs/ValueChecks.Positive/1' } do
+        assert(
+          known[path .. '::Async.Case'].status == (status == 'SUCCESS' and 'passed' or 'failed'),
+          'Neotest retained a stale case result'
+        )
+        for _, name in ipairs({ 'Inputs/ValueChecks.Positive/0', 'Inputs/ValueChecks.Positive/1' }) do
           assert(known[path .. '::' .. name].status == 'passed', 'lost parameter result: ' .. name)
         end
         local seen, tests = {}, 0
@@ -177,7 +181,8 @@ nio.run(function()
         assert(tests == 3, 'unexpected test count after refresh: ' .. tests)
         neotest.summary.open()
         neotest.summary:expand(path, true)
-        local expected = { 'Async.Case', 'ValueChecks.Positive', 'Inputs/ValueChecks.Positive/0', 'Inputs/ValueChecks.Positive/1' }
+        local expected =
+          { 'Async.Case', 'ValueChecks.Positive', 'Inputs/ValueChecks.Positive/0', 'Inputs/ValueChecks.Positive/1' }
         wait_for(function()
           for _, buf in ipairs(vim.api.nvim_list_bufs()) do
             if vim.bo[buf].filetype == 'neotest-summary' then
@@ -207,8 +212,8 @@ nio.run(function()
     -- Mimic save-triggered discovery, held across a single run request.
     -- Both result transitions must build and run without a second invocation.
     local definitions = require('neotest-cmake.source').definitions
-    local activity = require 'neotest-cmake.activity'
-    for _, failing in ipairs { true, false, true } do
+    local activity = require('neotest-cmake.activity')
+    for _, failing in ipairs({ true, false, true }) do
       source(failing)
       local before_runs = started_runs
       local entered, release, finished = nio.control.event(), nio.control.event(), nio.control.event()
@@ -241,8 +246,11 @@ nio.run(function()
       require('neotest-cmake.source').definitions = definitions
       parent = queued
       complete(parent, failing and 'FAILURE' or 'SUCCESS', 2)
-      assert(started_runs == before_runs + 2, 'expected preparation and execution events: ' .. (started_runs - before_runs))
-      assert(not activity.blocked { path }, 'discovery left the run guard active')
+      assert(
+        started_runs == before_runs + 2,
+        'expected preparation and execution events: ' .. (started_runs - before_runs)
+      )
+      assert(not activity.blocked({ path }), 'discovery left the run guard active')
     end
     source(false)
     parent:reset()
@@ -264,12 +272,12 @@ nio.run(function()
     for _, child in ipairs(children(parent)) do
       assert(not child:is_running())
     end
-    print 'Overseer async build/test, failure, restart and cancellation checks passed'
+    io.stdout:write('Overseer async build/test, failure, restart and cancellation checks passed\n')
   end, debug.traceback)
   watchdog:stop()
   watchdog:close()
   vim.notify = notify
-  for _, task in ipairs(overseer.list_tasks { include_ephemeral = true }) do
+  for _, task in ipairs(overseer.list_tasks({ include_ephemeral = true })) do
     if task.cwd == root and task:is_running() then
       task:stop()
     end
@@ -280,8 +288,8 @@ nio.run(function()
   vim.fn.delete(root, 'rf')
   if not ok then
     io.stderr:write(err .. '\n')
-    vim.cmd 'cquit 1'
+    vim.cmd('cquit 1')
   else
-    vim.cmd 'qa!'
+    vim.cmd('qa!')
   end
 end)

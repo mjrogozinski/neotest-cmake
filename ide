@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+# Select this project's tools even when launched from another development shell.
+if [[ "${1:-}" != --inside-nix ]]; then
+  exec nix develop "path:$PWD" --command "$PWD/ide" --inside-nix "$@"
+fi
+shift
+: "${NEOTEST_DEPS:?Nix test dependencies are missing}"
+: "${CPP_PARSER_DIR:?Nix C++ parser is missing}"
+
+# LuaLS uses these paths too. Preserve existing developer checkouts.
+mkdir -p .dependencies
+for dependency in neotest nvim-nio plenary.nvim; do
+  if [[ ! -e ".dependencies/$dependency" ]] || [[ -L ".dependencies/$dependency" && "$(readlink ".dependencies/$dependency")" == /nix/store/* ]]; then
+    ln -sfn "$NEOTEST_DEPS/$dependency" ".dependencies/$dependency"
+  fi
+done
+
+if [[ $# -eq 0 ]]; then
+  set -- lua/neotest-cmake/init.lua
+fi
+exec nvim "$@"

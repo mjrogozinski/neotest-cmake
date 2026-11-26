@@ -1,8 +1,7 @@
 local M = {}
 local function strip_colors(text)
   -- CTest replaces ESC with a printable marker in its JUnit XML report.
-  return (text:gsub('%[NON%-XML%-CHAR%-0x1B%]%[[%d;:]*m', '')
-    :gsub('\27%[[%d;:]*m', ''))
+  return (text:gsub('%[NON%-XML%-CHAR%-0x1B%]%[[%d;:]*m', ''):gsub('\27%[[%d;:]*m', ''))
 end
 function M.gtest_list(text)
   local result, suite = {}, nil
@@ -12,9 +11,14 @@ function M.gtest_list(text)
       suite = line:sub(1, -2)
     elseif suite and line:match('^%s+%S') then
       local name = vim.trim(line)
-      result[#result + 1] = { suite = suite, name = name, key = suite .. '.' .. name,
-        disabled = suite:match('^DISABLED_') ~= nil or suite:find('/DISABLED_', 1, true) ~= nil
-          or name:match('^DISABLED_') ~= nil }
+      result[#result + 1] = {
+        suite = suite,
+        name = name,
+        key = suite .. '.' .. name,
+        disabled = suite:match('^DISABLED_') ~= nil or suite:find('/DISABLED_', 1, true) ~= nil or name:match(
+          '^DISABLED_'
+        ) ~= nil,
+      }
     end
   end
   return result
@@ -23,26 +27,48 @@ function M.results(text)
   local results, current, log = {}, nil, {}
   for line in strip_colors(text):gmatch('[^\r\n]+') do
     local start = line:match('^%[ RUN      %] (.+)$')
-    if start then current, log = start, {} end
-    if current then log[#log + 1] = line end
+    if start then
+      current, log = start, {}
+    end
+    if current then
+      log[#log + 1] = line
+    end
     local status, key = line:match('^%[%s*(OK)%s*%] (.-) %(')
-    if not key then status, key = line:match('^%[%s*(FAILED)%s*%] (.-) %(') end
-    if not key then status, key = line:match('^%[%s*(SKIPPED)%s*%] (.-) %(') end
+    if not key then
+      status, key = line:match('^%[%s*(FAILED)%s*%] (.-) %(')
+    end
+    if not key then
+      status, key = line:match('^%[%s*(SKIPPED)%s*%] (.-) %(')
+    end
     if key and current == key then
-      results[#results + 1] = { key = key, status = ({ OK = 'passed', FAILED = 'failed', SKIPPED = 'skipped' })[status],
-        output = table.concat(log, '\n') }
+      results[#results + 1] = {
+        key = key,
+        status = ({ OK = 'passed', FAILED = 'failed', SKIPPED = 'skipped' })[status],
+        output = table.concat(log, '\n'),
+      }
       current = nil
     end
-
   end
-  if current then results[#results + 1] = { key = current, status = 'failed', output = table.concat(log, '\n') } end
+  if current then
+    results[#results + 1] = { key = current, status = 'failed', output = table.concat(log, '\n') }
+  end
   return results
 end
 local function decode(s)
   s = s:gsub('<!%[CDATA%[(.-)%]%]>', '%1')
-  return (s:gsub('&#x(%x+);', function(n) return vim.fn.nr2char(tonumber(n, 16)) end)
-    :gsub('&#(%d+);', function(n) return vim.fn.nr2char(tonumber(n)) end)
-    :gsub('&lt;', '<'):gsub('&gt;', '>'):gsub('&quot;', '"'):gsub('&apos;', "'"):gsub('&amp;', '&'))
+  return (
+    s:gsub('&#x(%x+);', function(n)
+      return vim.fn.nr2char(tonumber(n, 16))
+    end)
+      :gsub('&#(%d+);', function(n)
+        return vim.fn.nr2char(tonumber(n))
+      end)
+      :gsub('&lt;', '<')
+      :gsub('&gt;', '>')
+      :gsub('&quot;', '"')
+      :gsub('&apos;', "'")
+      :gsub('&amp;', '&')
+  )
 end
 function M.junit(xml)
   local out = {}
@@ -50,11 +76,14 @@ function M.junit(xml)
     local name = attrs:match('name="(.-)"')
     if name then
       local output = body:match('<system%-out[^>]*>(.-)</system%-out>') or ''
-      out[#out + 1] = { name = decode(name), output = strip_colors(decode(output)),
-        status = body:find('<failure[%s/>]') and 'failed'
-          or body:find('<error[%s/>]') and 'failed'
-          or (body:find('<skipped[%s/>]') or attrs:find('status="disabled"', 1, true) or attrs:find('status="notrun"', 1, true)) and 'skipped' or 'passed',
-        duration = tonumber(attrs:match('time="(.-)"')) }
+      out[#out + 1] = {
+        name = decode(name),
+        output = strip_colors(decode(output)),
+        status = body:find('<failure[%s/>]') and 'failed' or body:find('<error[%s/>]') and 'failed' or (body:find(
+          '<skipped[%s/>]'
+        ) or attrs:find('status="disabled"', 1, true) or attrs:find('status="notrun"', 1, true)) and 'skipped' or 'passed',
+        duration = tonumber(attrs:match('time="(.-)"')),
+      }
     end
   end
   return out

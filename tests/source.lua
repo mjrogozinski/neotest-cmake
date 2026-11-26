@@ -24,9 +24,12 @@ require('nio').run(function()
     local file, definitions = require('neotest-cmake.source').definitions(path)
     assert(file.path == path and file.type == 'file')
     local expected = {
-      { 'TEST', 'Basic.Pass' }, { 'TEST_F', 'Fixture.Pass' },
-      { 'TEST_P', 'Values.Pass' }, { 'TYPED_TEST', 'Types.Pass' },
-      { 'TYPED_TEST_P', 'TypeParameters.Pass' }, { 'TEST', 'Multiline.Pass' },
+      { 'TEST', 'Basic.Pass' },
+      { 'TEST_F', 'Fixture.Pass' },
+      { 'TEST_P', 'Values.Pass' },
+      { 'TYPED_TEST', 'Types.Pass' },
+      { 'TYPED_TEST_P', 'TypeParameters.Pass' },
+      { 'TEST', 'Multiline.Pass' },
     }
     assert(#definitions == #expected, vim.inspect(definitions))
     for i, want in ipairs(expected) do
@@ -39,7 +42,10 @@ require('nio').run(function()
     end
   end, debug.traceback)
   os.remove(path)
-  if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') end
-  print('Source query tests passed')
+  if not ok then
+    io.stderr:write(err .. '\n')
+    vim.cmd('cquit 1')
+  end
+  io.stdout:write('Source query tests passed\n')
   vim.cmd('qa!')
 end)

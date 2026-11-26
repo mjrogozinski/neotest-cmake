@@ -1,0 +1,44 @@
+name: Tooling
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  lua:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          version: v0.11.5
+          neovim: true
+      - uses: JohnnyMorganz/stylua-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          version: v2.6.0
+          args: --check lua tests
+      - uses: leafo/gh-actions-lua@v11
+        with:
+          luaVersion: '5.1'
+      - uses: leafo/gh-actions-luarocks@v5
+      - run: luarocks install luacheck 1.2.0
+      - run: make lint
+      - run: make download-dependencies
+      - name: Locate Neovim runtime types
+        run: nvim --clean --headless -i NONE '+lua io.write("VIMRUNTIME=" .. vim.env.VIMRUNTIME .. "\n")' +qa >> "$GITHUB_ENV"
+      - uses: mrcjkb/lua-typecheck-action@v1
+        with:
+          directories: .
+          configpath: .luarc.json
+          checklevel: Error
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: kdheepak/panvimdoc@v6.1.0
+        with:
+          vimdoc: neotest-cmake
+          version: 'Neovim >= 0.10'
+          description: 'CMake GoogleTest adapter for Neotest'
+          nodate: true
+          treesitter: true
+      - run: git diff --exit-code -- doc/neotest-cmake.txt

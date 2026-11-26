@@ -6,13 +6,18 @@ require('nio').run(function()
     local adapter = require('neotest-cmake')({ root = root, build_dir = '../../build/fixture' })
     local tree = assert(adapter.discover_positions(root .. '/cases.cpp'))
     local count = 0
-    for _, node in tree:iter_nodes() do if node:data().type == 'test' then count = count + 1 end end
+    for _, node in tree:iter_nodes() do
+      if node:data().type == 'test' then
+        count = count + 1
+      end
+    end
     assert(count == 16, 'expected sixteen concrete cases, got ' .. count)
     assert(adapter.is_test_file(root .. '/cases.cpp'))
     local detection = require('neotest-cmake.discovery')
     for _, signature in ipairs({
       '/nix/store/example-gtest/lib/libgtest_main.1.18.0.dylib',
-      'libgtest.so.1.14.0', 'gtest_main.dll',
+      'libgtest.so.1.14.0',
+      'gtest_main.dll',
     }) do
       local binary = vim.fn.tempname()
       local file = assert(io.open(binary, 'wb'))
@@ -40,12 +45,24 @@ require('nio').run(function()
       return results, built
     end
     local results = run(tree)
-    local expected = { ['Basic.Pass'] = 'passed', ['Basic.Fail'] = 'failed', ['Basic.Skip'] = 'skipped',
-      ['Basic.DISABLED_Off'] = 'skipped', ['Numbers/Values.Positive/0'] = 'passed', ['Numbers/Values.Positive/1'] = 'passed',
-      ['Named/Values.Positive/Three'] = 'passed', ['Typed/0.Size'] = 'passed', ['Typed/1.Size'] = 'passed',
-      ['Instances/TypeParameters/0.Size'] = 'passed', ['Instances/TypeParameters/1.Size'] = 'passed',
-      ['Numbers/Values.Mixed/0'] = 'passed', ['Numbers/Values.Mixed/1'] = 'skipped',
-      ['Named/Values.Mixed/Three'] = 'failed', ['Values.Positive/0'] = 'passed', ['Values.Mixed/0'] = 'passed' }
+    local expected = {
+      ['Basic.Pass'] = 'passed',
+      ['Basic.Fail'] = 'failed',
+      ['Basic.Skip'] = 'skipped',
+      ['Basic.DISABLED_Off'] = 'skipped',
+      ['Numbers/Values.Positive/0'] = 'passed',
+      ['Numbers/Values.Positive/1'] = 'passed',
+      ['Named/Values.Positive/Three'] = 'passed',
+      ['Typed/0.Size'] = 'passed',
+      ['Typed/1.Size'] = 'passed',
+      ['Instances/TypeParameters/0.Size'] = 'passed',
+      ['Instances/TypeParameters/1.Size'] = 'passed',
+      ['Numbers/Values.Mixed/0'] = 'passed',
+      ['Numbers/Values.Mixed/1'] = 'skipped',
+      ['Named/Values.Mixed/Three'] = 'failed',
+      ['Values.Positive/0'] = 'passed',
+      ['Values.Mixed/0'] = 'passed',
+    }
     for name, status in pairs(expected) do
       local id = root .. '/cases.cpp::' .. name
       assert(results[id] and results[id].status == status, name .. ': ' .. vim.inspect(results[id]))
@@ -56,16 +73,23 @@ require('nio').run(function()
     local function concrete(selected_tree, path, name)
       local node = assert(selected_tree:get_key(root .. '/' .. path .. '::' .. name), name)
       assert(node:data().name == name, 'display must use exact GoogleTest name')
-      local results, spec = run(node)
-      assert(vim.tbl_count(results) == 1 and results[node:data().id].status == 'passed', name)
+      local selected_results, spec = run(node)
+      assert(vim.tbl_count(selected_results) == 1 and selected_results[node:data().id].status == 'passed', name)
       if spec.context.direct then
         assert(spec.command[3] == '--gtest_filter=' .. name, 'direct selection ran sibling parameters')
       else
         assert(vim.tbl_count(spec.context.mappings) == 1, 'CTest selection ran sibling parameters')
       end
     end
-    for _, name in ipairs({ 'Numbers/Values.Positive/1', 'Named/Values.Positive/Three',
-      'Typed/1.Size', 'Instances/TypeParameters/1.Size', 'Values.Positive/0' }) do concrete(tree, 'cases.cpp', name) end
+    for _, name in ipairs({
+      'Numbers/Values.Positive/1',
+      'Named/Values.Positive/Three',
+      'Typed/1.Size',
+      'Instances/TypeParameters/1.Size',
+      'Values.Positive/0',
+    }) do
+      concrete(tree, 'cases.cpp', name)
+    end
     local debug_node = tree:get_key(root .. '/cases.cpp::Numbers/Values.Positive/1')
     local debug_spec = adapter.build_spec({ tree = debug_node, strategy = 'dap' })
     assert(debug_spec.strategy.type == 'codelldb' and debug_spec.strategy.request == 'launch')
@@ -118,21 +142,31 @@ require('nio').run(function()
 
     local values = tree:get_key(root .. '/cases.cpp::Values.Positive')
     assert(values:data().type == 'namespace' and #values:children() == 4)
-    assert(require('neotest.lib').positions.nearest(tree, values:data().range[1]):data().id == values:data().id,
-      'nearest source action must select all parameters')
+    assert(
+      require('neotest.lib').positions.nearest(tree, values:data().range[1]):data().id == values:data().id,
+      'nearest source action must select all parameters'
+    )
     -- CTest truncates passed output at 1 KiB and failed output at 300 KiB by
     -- default. Later cases in whole-executable registrations must keep their
     -- actual outcomes, including passing cases after a verbose failure.
     local verbose = run(assert(adapter.discover_positions(root .. '/verbose.cpp')))
-    for name, status in pairs({ ['Numbers/VerboseValues.Pass/0'] = 'passed',
-      ['Numbers/VerboseValues.Pass/1'] = 'passed', ['VerboseFailure.Fail'] = 'failed',
-      ['VerboseFailure.PassAfterFailure'] = 'passed' }) do
-      assert(verbose[root .. '/verbose.cpp::' .. name].status == status,
-        name .. ': expected ' .. status .. ', got ' .. verbose[root .. '/verbose.cpp::' .. name].status)
+    for name, status in pairs({
+      ['Numbers/VerboseValues.Pass/0'] = 'passed',
+      ['Numbers/VerboseValues.Pass/1'] = 'passed',
+      ['VerboseFailure.Fail'] = 'failed',
+      ['VerboseFailure.PassAfterFailure'] = 'passed',
+    }) do
+      assert(
+        verbose[root .. '/verbose.cpp::' .. name].status == status,
+        name .. ': expected ' .. status .. ', got ' .. verbose[root .. '/verbose.cpp::' .. name].status
+      )
     end
     local grouped = adapter.discover_positions(root .. '/grouped.cpp')
     local group_results, spec = run(grouped)
-    assert(group_results[root .. '/grouped.cpp::Group.Environment'].status == 'passed', 'fixture/environment not preserved')
+    assert(
+      group_results[root .. '/grouped.cpp::Group.Environment'].status == 'passed',
+      'fixture/environment not preserved'
+    )
     assert(group_results[root .. '/grouped.cpp::Group.Failure'].status == 'failed')
     local can_debug, debug_error = pcall(adapter.build_spec, { tree = grouped, strategy = 'dap' })
     assert(not can_debug and tostring(debug_error):find('CTest fixtures', 1, true), tostring(debug_error))
@@ -149,19 +183,39 @@ require('nio').run(function()
     local direct_tree = adapter.discover_positions(root .. '/unregistered.cpp')
     local direct, direct_spec = run(direct_tree)
     assert(direct_spec.context.direct, 'unregistered target must run directly')
-    for name, status in pairs({ ['Direct.Pass'] = 'passed', ['Direct.Fail'] = 'failed',
-      ['Direct.Skip'] = 'skipped', ['Direct.DISABLED_Off'] = 'skipped',
-      ['Numbers/DirectValues.Positive/0'] = 'passed', ['Numbers/DirectValues.Positive/1'] = 'passed',
-      ['Named/DirectValues.Positive/Three'] = 'passed', ['DirectTyped/0.Size'] = 'passed', ['DirectTyped/1.Size'] = 'passed',
-      ['Instances/DirectTypeParameters/0.Size'] = 'passed', ['Instances/DirectTypeParameters/1.Size'] = 'passed',
-      ['Numbers/DirectValues.Mixed/0'] = 'passed', ['Numbers/DirectValues.Mixed/1'] = 'skipped',
-      ['Named/DirectValues.Mixed/Three'] = 'failed', ['DirectValues.Positive/0'] = 'passed', ['DirectValues.Mixed/0'] = 'passed' }) do
+    for name, status in pairs({
+      ['Direct.Pass'] = 'passed',
+      ['Direct.Fail'] = 'failed',
+      ['Direct.Skip'] = 'skipped',
+      ['Direct.DISABLED_Off'] = 'skipped',
+      ['Numbers/DirectValues.Positive/0'] = 'passed',
+      ['Numbers/DirectValues.Positive/1'] = 'passed',
+      ['Named/DirectValues.Positive/Three'] = 'passed',
+      ['DirectTyped/0.Size'] = 'passed',
+      ['DirectTyped/1.Size'] = 'passed',
+      ['Instances/DirectTypeParameters/0.Size'] = 'passed',
+      ['Instances/DirectTypeParameters/1.Size'] = 'passed',
+      ['Numbers/DirectValues.Mixed/0'] = 'passed',
+      ['Numbers/DirectValues.Mixed/1'] = 'skipped',
+      ['Named/DirectValues.Mixed/Three'] = 'failed',
+      ['DirectValues.Positive/0'] = 'passed',
+      ['DirectValues.Mixed/0'] = 'passed',
+    }) do
       assert(direct[root .. '/unregistered.cpp::' .. name].status == status, name .. ' direct result mismatch')
     end
-    for _, name in ipairs({ 'Numbers/DirectValues.Positive/1', 'Named/DirectValues.Positive/Three',
-      'DirectTyped/1.Size', 'Instances/DirectTypeParameters/1.Size', 'DirectValues.Positive/0' }) do concrete(direct_tree, 'unregistered.cpp', name) end
+    for _, name in ipairs({
+      'Numbers/DirectValues.Positive/1',
+      'Named/DirectValues.Positive/Three',
+      'DirectTyped/1.Size',
+      'Instances/DirectTypeParameters/1.Size',
+      'DirectValues.Positive/0',
+    }) do
+      concrete(direct_tree, 'unregistered.cpp', name)
+    end
     local direct_debug = adapter.build_spec({
-      tree = direct_tree:get_key(root .. '/unregistered.cpp::Instances/DirectTypeParameters/1.Size'), strategy = 'dap' })
+      tree = direct_tree:get_key(root .. '/unregistered.cpp::Instances/DirectTypeParameters/1.Size'),
+      strategy = 'dap',
+    })
     assert(direct_debug.strategy.args[2] == '--gtest_filter=Instances/DirectTypeParameters/1.Size')
     local nearest = direct_tree:get_key(root .. '/unregistered.cpp::Direct.Pass')
     local nearest_results, nearest_spec = run(nearest)
@@ -170,8 +224,12 @@ require('nio').run(function()
     local second = adapter.discover_positions(root .. '/second.cpp')
     local mixed = require('neotest.types').Tree.from_list({
       { id = root, path = root, name = 'fixture', type = 'dir' },
-      tree:to_list(), direct_tree:to_list(), second:to_list(),
-    }, function(pos) return pos.id end)
+      tree:to_list(),
+      direct_tree:to_list(),
+      second:to_list(),
+    }, function(pos)
+      return pos.id
+    end)
     local mixed_results, mixed_specs = run(mixed)
     assert(#mixed_specs.context.runs == 3, 'expected one CTest batch and two direct binaries')
     assert(not mixed_specs.context.runs[1].context.direct, 'registered executables must retain CTest semantics')
@@ -206,7 +264,9 @@ require('nio').run(function()
       assert(qf.title == 'CMake build failed; tests not run' and qf.winid > 0, 'quickfix did not open')
       local diagnostic
       for _, item in ipairs(qf.items) do
-        if vim.api.nvim_buf_get_name(item.bufnr) == broken_path and item.text:find('intentional_build_failure', 1, true) then
+        if
+          vim.api.nvim_buf_get_name(item.bufnr) == broken_path and item.text:find('intentional_build_failure', 1, true)
+        then
           diagnostic = item
         end
       end
@@ -231,7 +291,9 @@ require('nio').run(function()
     local cold_ok, cold_error = xpcall(function()
       write_fixture(cases_path, cases_text .. '\n#error cold_discovery_failure\n')
       vim.system = function(command, ...)
-        if vim.tbl_contains(command, '--gtest_list_tests') then launches = launches + 1 end
+        if vim.tbl_contains(command, '--gtest_list_tests') then
+          launches = launches + 1
+        end
         return system(command, ...)
       end
       local cold = assert(adapter.discover_positions(root .. '/cases_extra.cpp'))
@@ -256,7 +318,9 @@ require('nio').run(function()
     local extra_tree = assert(adapter.discover_positions(root .. '/cases_extra.cpp'))
     local _, _, _, _, prepared = adapter.prepare(extra_tree)
     local function configure()
-      local result = vim.system({ 'cmake', '-S', root, '-B', vim.fn.getcwd() .. '/build/fixture' }, { text = true }):wait()
+      local result = vim
+        .system({ 'cmake', '-S', root, '-B', vim.fn.getcwd() .. '/build/fixture' }, { text = true })
+        :wait()
       assert(result.code == 0, result.stderr)
     end
     local reconfigured, config_error = xpcall(function()
@@ -265,16 +329,24 @@ require('nio').run(function()
       write_fixture(cmake_path, changed)
       configure()
       assert(owner() == 'second_unregistered', 'ownership stayed stale after CMake reconfiguration')
-      local spec = adapter.build_spec({ tree = extra_tree, strategy = 'integrated', _cmake_prepared = prepared })
-      assert(spec.context.direct and vim.fs.basename(spec.command[1]) == 'second_unregistered',
-        'prepared context reused obsolete source ownership')
+      local updated_spec =
+        adapter.build_spec({ tree = extra_tree, strategy = 'integrated', _cmake_prepared = prepared })
+      assert(
+        updated_spec.context.direct and vim.fs.basename(updated_spec.command[1]) == 'second_unregistered',
+        'prepared context reused obsolete source ownership'
+      )
     end, debug.traceback)
     write_fixture(cmake_path, cmake_text)
     configure()
     assert(owner() == 'cases', 'ownership did not recover after reconfiguration')
     assert(reconfigured, config_error)
-    print('All adapter integration checks passed')
+    io.stdout:write('All adapter integration checks passed\n')
   end, debug.traceback)
   require('nio').scheduler()
-  if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end
+  if not ok then
+    io.stderr:write(err .. '\n')
+    vim.cmd('cquit 1')
+  else
+    vim.cmd('qa!')
+  end
 end)

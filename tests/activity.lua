@@ -1,11 +1,15 @@
 local activity = require('neotest-cmake.activity')
 local root = vim.fn.getcwd()
 local notify, messages = vim.notify, {}
-vim.notify = function(message, level) messages[#messages + 1] = { message, level } end
+vim.notify = function(message, level)
+  messages[#messages + 1] = { message, level }
+end
 local events = {}
 vim.api.nvim_create_autocmd('User', {
   pattern = 'NeotestCmakeDiscoveryFinished',
-  callback = function(event) events[#events + 1] = event.data.root end,
+  callback = function(event)
+    events[#events + 1] = event.data.root
+  end,
 })
 local ok, err = xpcall(function()
   activity.with(root, function() end)
@@ -20,8 +24,10 @@ local ok, err = xpcall(function()
   assert(#events == 0, 'published completion before all workers finished')
   assert(#messages == 2, 'announced completion before all workers finished')
   finish()
-  assert(#messages == 3 and messages[3][1]:find('You can run tests now.', 1, true)
-    and messages[3][2] == vim.log.levels.INFO, 'expected one completion notification')
+  assert(
+    #messages == 3 and messages[3][1]:find('You can run tests now.', 1, true) and messages[3][2] == vim.log.levels.INFO,
+    'expected one completion notification'
+  )
   assert(#events == 1 and events[1] == root, 'missing project completion event')
   finish()
   activity.with(root, function() end)
@@ -29,11 +35,14 @@ local ok, err = xpcall(function()
   assert(not activity.blocked({ root }))
 end, debug.traceback)
 vim.notify = notify
-if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') end
+if not ok then
+  io.stderr:write(err .. '\n')
+  vim.cmd('cquit 1')
+end
 require('nio').run(function()
   local nio = require('nio')
   nio.scheduler()
-  local ok, err = xpcall(function()
+  local async_ok, async_err = xpcall(function()
     local finish, child = activity.start(root), activity.start(root)
     local resumed, done = false, nio.control.event()
     nio.run(function()
@@ -52,8 +61,13 @@ require('nio').run(function()
     done.wait()
     assert(resumed, 'pending run was discarded')
     assert(#events == 1, 'queued run emitted a retry notification')
-    print('Discovery completion and async wait checks passed')
+    io.stdout:write('Discovery completion and async wait checks passed\n')
   end, debug.traceback)
   nio.scheduler()
-  if not ok then io.stderr:write(err .. '\n'); vim.cmd('cquit 1') else vim.cmd('qa!') end
+  if not async_ok then
+    io.stderr:write(async_err .. '\n')
+    vim.cmd('cquit 1')
+  else
+    vim.cmd('qa!')
+  end
 end)
