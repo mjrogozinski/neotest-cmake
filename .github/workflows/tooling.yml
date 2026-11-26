@@ -27,7 +27,9 @@ jobs:
         run: nvim --clean --headless -i NONE '+lua io.write("VIMRUNTIME=" .. vim.env.VIMRUNTIME .. "\n")' +qa >> "$GITHUB_ENV"
       - uses: mrcjkb/lua-typecheck-action@v1
         with:
-          directories: .
+          directories: |
+            lua
+            tests
           configpath: .luarc.json
           checklevel: Error
   documentation:

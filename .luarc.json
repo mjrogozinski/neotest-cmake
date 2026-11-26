@@ -3,7 +3,7 @@
   "runtime.version": "LuaJIT",
   "workspace.checkThirdParty": false,
   "workspace.library": ["$VIMRUNTIME/lua", ".dependencies/neotest/lua", ".dependencies/nvim-nio/lua", ".dependencies/plenary.nvim/lua"],
-  "workspace.ignoreDir": [".git", "build", ".dependencies"],
+  "workspace.ignoreDir": [".git", "build", ".dependencies", ".luarocks"],
   "diagnostics.libraryFiles": "Disable",
   "diagnostics.globals": ["vim"],
   "diagnostics.neededFileStatus": {"codestyle-check": "None"}
