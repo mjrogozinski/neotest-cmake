@@ -1,7 +1,12 @@
 local M = {}
+local function strip_colors(text)
+  -- CTest replaces ESC with a printable marker in its JUnit XML report.
+  return (text:gsub('%[NON%-XML%-CHAR%-0x1B%]%[[%d;:]*m', '')
+    :gsub('\27%[[%d;:]*m', ''))
+end
 function M.gtest_list(text)
   local result, suite = {}, nil
-  for line in text:gmatch('[^\r\n]+') do
+  for line in strip_colors(text):gmatch('[^\r\n]+') do
     line = line:gsub('%s+#.*$', '')
     if line:match('^%S.*%.$') then
       suite = line:sub(1, -2)
@@ -16,8 +21,7 @@ function M.gtest_list(text)
 end
 function M.results(text)
   local results, current, log = {}, nil, {}
-  for line in text:gmatch('[^\r\n]+') do
-    line = line:gsub('\27%[[%d;]*m', '')
+  for line in strip_colors(text):gmatch('[^\r\n]+') do
     local start = line:match('^%[ RUN      %] (.+)$')
     if start then current, log = start, {} end
     if current then log[#log + 1] = line end
@@ -46,7 +50,7 @@ function M.junit(xml)
     local name = attrs:match('name="(.-)"')
     if name then
       local output = body:match('<system%-out[^>]*>(.-)</system%-out>') or ''
-      out[#out + 1] = { name = decode(name), output = decode(output),
+      out[#out + 1] = { name = decode(name), output = strip_colors(decode(output)),
         status = body:find('<failure[%s/>]') and 'failed'
           or body:find('<error[%s/>]') and 'failed'
           or (body:find('<skipped[%s/>]') or attrs:find('status="disabled"', 1, true) or attrs:find('status="notrun"', 1, true)) and 'skipped' or 'passed',
